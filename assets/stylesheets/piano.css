@@ -1,0 +1,37 @@
+.keyboard {
+  font-size: 2em
+}
+.key-container {
+  position:relative;
+  float:left;
+}
+.key {
+  border:1px solid black
+}
+.key-C, .key-D, .key-E, .key-F, .key-G, .key-A, .key-B {
+  background-color:white;
+  width: 40px;
+  height: 140px;
+  float: left
+}
+.key-Bb, .key-Db, .key-Eb, .key-Gb, .key-Ab {
+  background-color:black;
+  z-index:2;
+  left:-11px;
+  width: 20px;
+  height: 84px;
+  position:absolute;
+  float:left;
+}
+
+.key-cs, .key-fs {
+  left:-14px;
+}
+
+.key-ds, .key-as {
+  left: -8px;
+}
+
+audio {
+  display: none
+}
