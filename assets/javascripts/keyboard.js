@@ -4,17 +4,46 @@
   const compressor = context.createDynamicsCompressor();
   compressor.connect(context.destination);
 
+  /**
+   * Threshold amplitude for start of sound within a sample.
+   */
+  const SOUND_START_THRESHOLD = 0.01;
+
+  /**
+   * Time subtracted from the time point of the first threshold, which is used
+   * to provide a suitable buffer for capturing the attack without introducing
+   * excessive delay.
+   */
+  const SOUND_BUFFER_SECONDS = 0.03;
+
+  /**
+   * Number of seconds of release for the closing envelope of the sample.
+   */
+  const NOTE_RELEASE_SECONDS = 0.15;
+
   const KEYS = [
     'C', 'Db', 'D', 'Eb', 'E', 'F',
     'Gb', 'G', 'Ab', 'A', 'Bb', 'B'
   ];
-  const KEY_NOTE_MAPPING = {
-    // OCTAVE => KEYLIST
-    2: ['1',   '2', '3', '4', '5', '6', '7', '8', '9', '0', '-', '='],
-    3: ['q',   'w', 'e', 'r', 't', 'y', 'u', 'i', 'o', 'p', '[', ']'],
-    4: ['a',   's', 'd', 'f', 'g', 'h', 'j', 'k', 'l', ';', '\'', 'RET'],
-    5: ['LSH', 'z', 'x', 'c', 'v', 'b', 'n', 'm', ',', '.', '/', 'RSH']
-  };
+
+  const KEY_NOTE_MAPPING = (() => {
+    const digits = ['1', '2', '3', '4', '5', '6', '7', '8', '9', '0'].map(prepend('Digit'));
+    const minusEqual = ['Minus', 'Equal'];
+    const brackets = ['Left', 'Right'].map(prepend('Bracket'));
+    const topRow = ['Q', 'W', 'E', 'R', 'T', 'Y', 'U', 'I', 'O', 'P'].map(prepend('Key')).concat(brackets);
+    const midRow = ['A', 'S', 'D', 'F', 'G', 'H', 'J', 'K', 'L'].map(prepend('Key'))
+        .concat(['Semicolon', 'Quote', 'Enter']);
+    const bottomRow = ['ShiftLeft']
+      .concat(['Z', 'X', 'C', 'V', 'B', 'N', 'M'].map(prepend('Key')))
+      .concat(['Comma', 'Period', 'Slash', 'ShiftRight']);
+    return {
+      // Octave => Array<KeyCode>
+      2: digits.concat(minusEqual),
+      3: topRow,
+      4: midRow,
+      5: bottomRow,
+    };
+  })();
 
   const DEFAULT_FORTE = 'ff';
   const FORTE_OVERRIDE = {
@@ -25,7 +54,6 @@
   };
 
   const OCTAVES = [1, 2, 3, 4, 5, 6, 7];
-  OCTAVES.sort();
 
   const KEY_OCTAVES = flatMap(OCTAVES, octave => {
     return KEYS.map(key => [key, octave]);
@@ -45,6 +73,10 @@
   }, {});
 
 
+  function prepend(prefix) {
+    return str => String(prefix) + str;
+  }
+
   function flatMap(arr, fn) {
     const fin = [];
     arr.forEach(item => {
@@ -53,16 +85,6 @@
     return fin;
   }
 
-  function getOctaveKey(name) {
-    // The octave character is only a single digit number.
-    return [Number(name.charAt(0)), name.substr(1)];
-  }
-
-  function codeForKeyPress(e) {
-    if (e.keyCode === 16) return e.location === 2 ? 'RSH' : 'LSH';
-    if (e.keyCode === 13) return 'ENT';
-    return e.key.toLowerCase();
-  }
 
   /**
    * Given a function, return a memoized version of the function which caches the return value
@@ -119,17 +141,7 @@
     });
   });
 
-  /**
-   * Threshold amplitude for start of sound within a sample.
-   */
-  const SOUND_START_THRESHOLD = 0.01;
 
-  /**
-   * Time subtracted from the time point of the first threshold, which is used
-   * to provide a suitable buffer for capturing the attack without introducing
-   * excessive delay.
-   */
-  const SOUND_BUFFER_SECONDS = 0.03;
 
   /**
    * Given a key, lookup the (memoized) decoded audio data, and take samples through
@@ -159,27 +171,46 @@
     });
   });
 
-  function playAudioData(decodedAudio, startTime, gain) {
-    console.debug('playAudioData: %o', startTime, gain);
+  function playAudioData(key, decodedAudio, startTime, gain) {
+    console.debug('playAudioData: ', key, startTime, gain);
     const audioSource = context.createBufferSource();
     const gainNode = context.createGain();
     gainNode.gain.value = gain || 1.0;
     gainNode.connect(compressor);
+    gainNodes[key] = gainNode;
     audioSource.buffer = decodedAudio;
     audioSource.connect(gainNode);
     audioSource.start(0, startTime);
   }
 
-  function playKey(key) {
-    console.debug('playKey: %o', key);
+  function playNote(key) {
+    console.debug('playNote: %o', key);
     const audioData = getAudioData(key);
     const startTime = getAudioStartTime(key);
-    console.log(audioData, startTime);
     return Promise.all([audioData, startTime]).then(res => {
-      console.debug('playbackData', res);
+      renderKeyActive(key);
       const gain = GAIN_OVERRIDE[key] || 0.5;
-      playAudioData(res[0], res[1], gain);
+      playAudioData(key, res[0], res[1], gain);
     });
+  }
+
+  const gainNodes = {};
+  function getGainNode(key) {
+    if (gainNodes[key]) {
+      return Promise.resolve(gainNodes[key]);
+    }
+    return Promise.reject(new Error('no gain node for key: ' + key));
+  }
+
+  function releaseNote(key) {
+    getGainNode(key)
+      .then(diminishGain.bind(null, NOTE_RELEASE_SECONDS))
+      .catch(() => {});
+    renderKeyInactive(key);
+  }
+
+  function diminishGain(releaseTime, gainNode) {
+    gainNode.gain.linearRampToValueAtTime(0, context.currentTime + releaseTime);
   }
 
   function makeKey(container, key, oct) {
@@ -188,38 +219,59 @@
     cont.className = 'key-container';
     el.className = 'key key-' + key;
     el.setAttribute('data-key', key + oct);
+    el.id = 'key-' + key + oct;
     container.appendChild(cont);
     cont.appendChild(el);
+  }
+
+  function getKeyElement(key) {
+    return document.getElementById('key-' + key);
+  }
+
+  function renderKeyActive(key) {
+    const el = getKeyElement(key);
+    if (!el) return;
+    el.classList.add('active');
+  }
+
+  function renderKeyInactive(key) {
+    const el = getKeyElement(key);
+    if (!el) return;
+    el.classList.remove('active');
+  }
+
+  function keyFromEvent(e) {
+    return e.target.getAttribute('data-key')
   }
 
   function buildPiano(container) {
     KEY_OCTAVES.forEach(ko => {
       makeKey(container, ko[0], ko[1]);
     });
-    container.addEventListener('click', e => Promise.resolve(e)
-      .then(e => {
-        const key = e.target.getAttribute('data-key')
-        return key;
-      })
-      .then(playKey)
-    );
+    container.addEventListener('mousedown', e => Promise.resolve(e)
+      .then(keyFromEvent)
+      .then(playNote));
+    container.addEventListener('mouseup', e => Promise.resolve(e)
+      .then(keyFromEvent)
+      .then(releaseNote));
   }
 
   function bindKeys() {
     const keyState = {};
     window.addEventListener('keydown', e => {
-      const key = KEY_CODE_NOTES[codeForKeyPress(e)];
-      console.log('keyDown', key, VALID_KEYS);
+      const key = KEY_CODE_NOTES[e.code];
       if (!key) return;
       if (key in VALID_KEYS && !keyState[key]) {
         keyState[key] = true;
-        playKey(key);
-        lastKey = key;
+        playNote(key);
       }
     });
     window.addEventListener('keyup', e => {
-      const key = KEY_CODE_NOTES[codeForKeyPress(e)];
-      if (key) keyState[key] = false;
+      const key = KEY_CODE_NOTES[e.code];
+      if (key) {
+        keyState[key] = false;
+        releaseNote(key);
+      }
     });
   }
 

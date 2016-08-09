@@ -6,7 +6,8 @@
   float:left;
 }
 .key {
-  border:1px solid black
+  border:1px solid black;
+  transition: 0.05s;
 }
 .key-C, .key-D, .key-E, .key-F, .key-G, .key-A, .key-B {
   background-color:white;
@@ -14,6 +15,7 @@
   height: 140px;
   float: left
 }
+
 .key-Bb, .key-Db, .key-Eb, .key-Gb, .key-Ab {
   background-color:black;
   z-index:2;
@@ -30,6 +32,10 @@
 
 .key-ds, .key-as {
   left: -8px;
+}
+
+.key.active {
+  box-shadow: inset 0 0 15px #3d3
 }
 
 audio {
