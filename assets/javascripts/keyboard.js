@@ -248,12 +248,20 @@
     KEY_OCTAVES.forEach(ko => {
       makeKey(container, ko[0], ko[1]);
     });
+    let mouseKeys = [];
     container.addEventListener('mousedown', e => Promise.resolve(e)
       .then(keyFromEvent)
+      .then(key => {
+        mouseKeys.push(key);
+        return key;
+      })
       .then(playNote));
     container.addEventListener('mouseup', e => Promise.resolve(e)
       .then(keyFromEvent)
-      .then(releaseNote));
+      .then(() => {
+        mouseKeys.forEach(releaseNote);
+        mouseKeys = [];
+      }));
   }
 
   function bindKeys() {
