@@ -41,3 +41,14 @@
 audio {
   display: none
 }
+
+.midi-status {
+  font-size: 12px;
+  clear:left;
+}
+.midi-status.connected {
+  color: green
+}
+.midi-status.initializing {
+  font-style: italic;
+}

@@ -14,7 +14,7 @@
    * to provide a suitable buffer for capturing the attack without introducing
    * excessive delay.
    */
-  const SOUND_BUFFER_SECONDS = 0.03;
+  const SOUND_BUFFER_SECONDS = 0.01;
 
   /**
    * Number of seconds of release for the closing envelope of the sample.
@@ -26,6 +26,9 @@
     'Gb', 'G', 'Ab', 'A', 'Bb', 'B'
   ];
 
+  function prepend(prefix) {
+    return str => String(prefix) + str;
+  }
   const KEY_NOTE_MAPPING = (() => {
     const digits = ['1', '2', '3', '4', '5', '6', '7', '8', '9', '0'].map(prepend('Digit'));
     const minusEqual = ['Minus', 'Equal'];
@@ -45,12 +48,12 @@
     };
   })();
 
-  const DEFAULT_FORTE = 'ff';
+  const DEFAULT_FORTE = 'mf';
   const FORTE_OVERRIDE = {
-    'B5': 'mf',  // original E5 aiff has distortion in the 'ff' sample
+    //'B5': 'mf',  // original E5 aiff has distortion in the 'ff' sample
   };
   const GAIN_OVERRIDE = {
-    'B5': 3.0
+    //'B5': 3.0
   };
 
   const OCTAVES = [1, 2, 3, 4, 5, 6, 7];
@@ -60,6 +63,14 @@
   });
 
   const KEY_OCTAVES_STR = KEY_OCTAVES.map(ok => ok[0] + ok[1]);
+
+  function flatMap(arr, fn) {
+    const fin = [];
+    arr.forEach(item => {
+      fn(item).forEach(sub => fin.push(sub));
+    });
+    return fin;
+  }
 
   const KEY_CODE_NOTES = (function() {
     return flatMap(Object.keys(KEY_NOTE_MAPPING), octave => {
@@ -72,17 +83,40 @@
     return acc;
   }, {});
 
+  const state = {
+    hasMidiSupport: null,
+    hasMidiInput: null,
+    keyActive: {}
+  };
 
-  function prepend(prefix) {
-    return str => String(prefix) + str;
+  const subscriptions = {};
+  let subscriberSerial = 0;
+  function stateSubscribe(keys, cb) {
+    keys.forEach(key => {
+      cb.__subscriber_id = ++subscriberSerial;
+      cb.__subscriber_keys = keys.slice();
+      (subscriptions[key] = subscriptions[key] || []).push(cb);
+    });
   }
 
-  function flatMap(arr, fn) {
-    const fin = [];
-    arr.forEach(item => {
-      fn(item).forEach(sub => fin.push(sub));
-    });
-    return fin;
+  function updateState(newState) {
+    Object.assign(state, newState);
+    const notified = {};
+    Object.keys(newState)
+      .filter(key => subscriptions[key])
+      .map(key => subscriptions[key])
+      .forEach(subList => subList.forEach(cb => {
+        if (!notified[cb.__subscriber_id]) {
+          notified[cb.__subscriber_id] = true;
+          const subState = cb.__subscriber_keys.reduce((acc, next) => {
+            acc[next] = state[next];
+            return acc;
+          }, {});
+          setTimeout(() => {
+            cb(subState);
+          }, 0);
+        }
+      }));
   }
 
 
@@ -174,6 +208,12 @@
   function playAudioData(key, decodedAudio, startTime, gain) {
     console.debug('playAudioData: ', key, startTime, gain);
     const audioSource = context.createBufferSource();
+    if (gainNodes[key]) {
+      diminishGain(gainNodes[key]);
+    }
+    audioSource.onended = () => {
+      state.keyActive[key] = false;
+    };
     const gainNode = context.createGain();
     gainNode.gain.value = gain || 1.0;
     gainNode.connect(compressor);
@@ -183,33 +223,29 @@
     audioSource.start(0, startTime);
   }
 
-  function playNote(key) {
-    console.debug('playNote: %o', key);
+  function playNote(key, velocity = 128) {
+    console.debug('playNote: %o', key, velocity);
     const audioData = getAudioData(key);
     const startTime = getAudioStartTime(key);
+    state.keyActive[key] = true;
+
     return Promise.all([audioData, startTime]).then(res => {
+      if (!state.keyActive[key]) return;
       renderKeyActive(key);
-      const gain = GAIN_OVERRIDE[key] || 0.5;
+      const gain = GAIN_OVERRIDE[key] || (0.66 * velocity / 128);
       playAudioData(key, res[0], res[1], gain);
     });
   }
 
   const gainNodes = {};
-  function getGainNode(key) {
-    if (gainNodes[key]) {
-      return Promise.resolve(gainNodes[key]);
-    }
-    return Promise.reject(new Error('no gain node for key: ' + key));
-  }
-
   function releaseNote(key) {
-    getGainNode(key)
-      .then(diminishGain.bind(null, NOTE_RELEASE_SECONDS))
-      .catch(() => {});
+    if (gainNodes[key]) {
+      diminishGain(gainNodes[key]);
+    }
     renderKeyInactive(key);
   }
 
-  function diminishGain(releaseTime, gainNode) {
+  function diminishGain(gainNode, releaseTime = NOTE_RELEASE_SECONDS) {
     gainNode.gain.linearRampToValueAtTime(0, context.currentTime + releaseTime);
   }
 
@@ -228,6 +264,7 @@
     return document.getElementById('key-' + key);
   }
 
+
   function renderKeyActive(key) {
     const el = getKeyElement(key);
     if (!el) return;
@@ -244,27 +281,161 @@
     return e.target.getAttribute('data-key')
   }
 
+  function parseMidiNote(value) {
+    // 24 => "C1"
+    // 36 => "C2"
+    // todo(carpita): support initial 3 keys to left of C1 (code 21-23)
+    if (value < 21) return;
+    const octave = Math.floor(value / 12) - 1;
+    const step = value % 12;
+    return KEYS[step] + String(octave);
+  }
+
+  function parseMidiMessage(message) {
+    const data = message.data;
+    if (!data) {
+      console.log('no data', message);
+      return;
+    }
+    let command;
+    let noteValue = null;
+    let velocity = 0;
+
+    // Mask off midi channel bits
+    switch (data[0] & 0xf0) {
+      // Note on
+      case 0x90:
+        velocity = data[2];
+        if (velocity > 0) {
+          command = 'noteOn';
+        } else if (velocity === 0) {
+          command = 'noteOff';
+        }
+        noteValue = data[1];
+        break;
+
+      case 0x80:
+        velocity = data[2];
+        command = 'noteOff';
+        noteValue = data[1];
+        break;
+    }
+
+    if (!command) return null;
+
+    const note = parseMidiNote(noteValue);
+    if (!note) return null;
+
+    return {
+      command,
+      note,
+      velocity,
+    };
+  }
+
+  const getMidiListener = memoize(() => {
+
+    function generateListener(midiAccess) {
+
+      updateState({hasMidiSupport: true});
+
+      let callbacks = [];
+      const listener = {
+        on: cb => callbacks.push(cb),
+        off: cb => {
+          callbacks = callbacks.filter(fn => fn !== cb);
+        }
+      };
+
+      let currentInput = null;
+
+      function updateInput() {
+        let currentInput, id;
+        for ([id, currentInput] of midiAccess.inputs) {
+          break;
+        }
+        updateState({
+          hasMidiInput: !!currentInput
+        });
+        if (!currentInput) return;
+
+        /**
+         * Unfortunately it's possible to get a redundant noteOn midi signal from a device
+         * when multiple keys are played and released, so we have to keep track of state
+         * and flip the command to "noteOff" when a redundant "noteOn" message is received.
+         *
+         * This condition is likely due to a faulty MIDI-USB converter owned by the author,
+         * but the edge case handling will not be harmful to correct hardware implementations.
+         */
+        const noteState = {};
+        currentInput.onmidimessage = message => {
+          const parsed = parseMidiMessage(message);
+          if (!parsed) return;
+          if (parsed.command === 'noteOn') {
+            if (noteState[parsed.note] === 'on') {
+              noteState[parsed.note] = 'off';
+              parsed.command = 'noteOff';
+            } else {
+              noteState[parsed.note] = 'on';
+            }
+          } else {
+            noteState[parsed.note] = 'off';
+          }
+
+          callbacks.forEach(l => l(parsed));
+        };
+      }
+      midiAccess.onstatechange = updateInput;
+      updateInput();
+
+      return listener;
+    }
+
+    return navigator.requestMIDIAccess()
+      .then(generateListener)
+      .catch(e => {
+        updateState({hasMidiSupport: false});
+        throw e;
+      });
+  });
+
   function buildPiano(container) {
     KEY_OCTAVES.forEach(ko => {
       makeKey(container, ko[0], ko[1]);
     });
-    let mouseKeys = [];
-    container.addEventListener('mousedown', e => Promise.resolve(e)
-      .then(keyFromEvent)
-      .then(key => {
-        mouseKeys.push(key);
-        return key;
-      })
-      .then(playNote));
-    container.addEventListener('mouseup', e => Promise.resolve(e)
-      .then(keyFromEvent)
-      .then(() => {
-        mouseKeys.forEach(releaseNote);
-        mouseKeys = [];
-      }));
   }
 
-  function bindKeys() {
+  function bindMouse(container) {
+
+    function require(mesg) {
+      return arg => {
+        if (!arg) throw new Error(mesg || 'missing argument');
+        return arg;
+      };
+    };
+
+    container.addEventListener('mousedown', e => Promise.resolve(e)
+      .then(keyFromEvent)
+      .then(require('event key'))
+      .then(playNote)
+      .catch(e => {}));
+
+    container.addEventListener('mouseout', e => Promise.resolve(e)
+      .then(keyFromEvent)
+      .then(require('event key'))
+      .then(releaseNote)
+      .catch(e => {}));
+
+    container.addEventListener('mouseup', e => Promise.resolve(e)
+      .then(() => {
+        Object.keys(state.keyActive)
+          .filter(key => state.keyActive[key])
+          .forEach(releaseNote);
+      }));
+
+  }
+
+  function bindKeyboard() {
     const keyState = {};
     window.addEventListener('keydown', e => {
       const key = KEY_CODE_NOTES[e.code];
@@ -289,11 +460,53 @@
     });
   }
 
+  function initMidi(container) {
+
+    const midiStatus = document.createElement('div');
+    const baseClassName = 'midi-status';
+    midiStatus.className = baseClassName;
+    container.appendChild(midiStatus);
+    stateSubscribe(['hasMidiInput', 'hasMidiSupport'], state => {
+      let mesg = '';
+      let className = baseClassName;
+      if (state.hasMidiInput) {
+        mesg = 'Device Connected';
+        className += ' connected';
+      } else if (state.hasMidiSupport) {
+        mesg = 'Device Disconnected';
+        className += ' disconnected';
+      } else if (state.hasMidiSupport === false) {
+        mesg = 'Not Supported';
+        className += ' unsupported';
+      } else {
+        mesg = 'Initializing';
+        className += ' initializing';
+      }
+      midiStatus.innerHTML = 'MIDI: ' + mesg;
+      midiStatus.className = className;
+    });
+
+    getMidiListener().then(listener => {
+      listener.on(message => {
+        if (message.command === 'noteOn') {
+          playNote(message.note, message.velocity);
+        } else if (message.command === 'noteOff') {
+          releaseNote(message.note);
+        }
+      });
+    }).catch(e => {
+      console.error(e);
+    });
+  }
+
   function init(container) {
     initAudio();
     buildPiano(container);
-    bindKeys();
+    initMidi(container);
+    bindMouse(container);
+    bindKeyboard();
   }
+
   global.keyboard = {
     init,
   };
