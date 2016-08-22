@@ -1,12 +1,11 @@
-#!/bin/bash -e
+#!/bin/bash -ex
 
 convert-samples() {
-  cd tmp
-  if ! type ffmpeg >/dev/null; then
-    return 1
-  fi
-  for file in *.aiff; do
-    ffmpeg -i "$file" $(basename "$file" .aiff).ogg
+  local dest="../assets/audio/"
+  cd samples
+  for file in *.trimmed.aiff; do
+    ffmpeg -y -i "$file" ${dest}$(basename "$file" .trimmed.aiff).ogg
+    ffmpeg -y -i "$file" ${dest}$(basename "$file" .trimmed.aiff).mp3
   done
   cd ..
 }

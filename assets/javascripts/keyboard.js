@@ -5,21 +5,14 @@
   compressor.connect(context.destination);
 
   /**
-   * Threshold amplitude for start of sound within a sample.
-   */
-  const SOUND_START_THRESHOLD = 0.01;
-
-  /**
-   * Time subtracted from the time point of the first threshold, which is used
-   * to provide a suitable buffer for capturing the attack without introducing
-   * excessive delay.
-   */
-  const SOUND_BUFFER_SECONDS = 0.01;
-
-  /**
    * Number of seconds of release for the closing envelope of the sample.
    */
-  const NOTE_RELEASE_SECONDS = 0.15;
+  const NOTE_RELEASE_SECONDS = 0.25;
+
+  /**
+   * Number of seconds to ramp note attack.
+   */
+  const NOTE_ATTACK_SECONDS = 0.0001;
 
   const KEYS = [
     'C', 'Db', 'D', 'Eb', 'E', 'F',
@@ -47,14 +40,6 @@
       5: bottomRow,
     };
   })();
-
-  const DEFAULT_FORTE = 'mf';
-  const FORTE_OVERRIDE = {
-    //'B5': 'mf',  // original E5 aiff has distortion in the 'ff' sample
-  };
-  const GAIN_OVERRIDE = {
-    //'B5': 3.0
-  };
 
   const OCTAVES = [1, 2, 3, 4, 5, 6, 7];
 
@@ -150,9 +135,8 @@
     return audio;
   }
 
-  function audioPath(key, intensity) {
-    const forte = FORTE_OVERRIDE[key] || 'ff';
-    return 'assets/audio/Piano.' + forte + '.' + key + '.ogg';
+  function audioPath(key) {
+    return 'assets/audio/Piano.ff.' + key + '.ogg';
   }
 
   const getAudioData = memoize(function(key) {
@@ -175,38 +159,8 @@
     });
   });
 
-
-
-  /**
-   * Given a key, lookup the (memoized) decoded audio data, and take samples through
-   * the buffer until an amplitude threshold is found indicating that the piano strike
-   * has occurred.  The number of seconds, as a floating point number, will be returned.
-   *
-   * @return Promise<Float> resolving to the number of seconds within the sample that
-   *   the sound actually begins, over the threshold defined in AUDIO_NOISE_THRESHOLD.
-   */
-  const getAudioStartTime = memoize(function(key) {
-    console.debug('getAudioStartTime', key);
-    return getAudioData(key).then(decoded => {
-      const channelData = decoded.getChannelData(0);
-      const numSamples = 5000;
-      const step = parseInt((channelData.length / numSamples) - 1, 10);
-      for (let i = 0; i < numSamples; i++) {
-        const pos = i * step;
-        const pt = channelData[pos];
-        if (pt >= SOUND_START_THRESHOLD || pt < -SOUND_START_THRESHOLD) {
-          // Find the point in the sound, in seconds, and subtract a buffer time
-          // to ensure we capture the attack of the sound.
-          const startTime = 1.0 * pos / decoded.sampleRate - SOUND_BUFFER_SECONDS;
-          return startTime;
-        }
-      }
-      return 0.0;
-    });
-  });
-
-  function playAudioData(key, decodedAudio, startTime, gain) {
-    console.debug('playAudioData: ', key, startTime, gain);
+  function playAudioData(key, decodedAudio, gain) {
+    console.debug('playAudioData: ', key, gain);
     const audioSource = context.createBufferSource();
     if (gainNodes[key]) {
       diminishGain(gainNodes[key]);
@@ -215,25 +169,23 @@
       state.keyActive[key] = false;
     };
     const gainNode = context.createGain();
-    gainNode.gain.value = gain || 1.0;
-    gainNode.connect(compressor);
+    gainNode.gain.value = 0;
+    gainNode.gain.linearRampToValueAtTime(gain || 1.0, context.currentTime + NOTE_ATTACK_SECONDS);
     gainNodes[key] = gainNode;
+    gainNode.connect(context.destination);
     audioSource.buffer = decodedAudio;
     audioSource.connect(gainNode);
-    audioSource.start(0, startTime);
+    audioSource.start(0);
   }
 
   function playNote(key, velocity = 128) {
     console.debug('playNote: %o', key, velocity);
-    const audioData = getAudioData(key);
-    const startTime = getAudioStartTime(key);
     state.keyActive[key] = true;
-
-    return Promise.all([audioData, startTime]).then(res => {
+    return getAudioData(key).then(audioData => {
       if (!state.keyActive[key]) return;
       renderKeyActive(key);
-      const gain = GAIN_OVERRIDE[key] || (0.66 * velocity / 128);
-      playAudioData(key, res[0], res[1], gain);
+      const gain = (0.66 * velocity / 128);
+      playAudioData(key, audioData, gain);
     });
   }
 
@@ -246,7 +198,7 @@
   }
 
   function diminishGain(gainNode, releaseTime = NOTE_RELEASE_SECONDS) {
-    gainNode.gain.linearRampToValueAtTime(0, context.currentTime + releaseTime);
+    gainNode.gain.setTargetAtTime(0, context.currentTime, releaseTime);
   }
 
   function makeKey(container, key, oct) {
@@ -438,6 +390,7 @@
   function bindKeyboard() {
     const keyState = {};
     window.addEventListener('keydown', e => {
+      console.log('keydown', e.code);
       const key = KEY_CODE_NOTES[e.code];
       if (!key) return;
       if (key in VALID_KEYS && !keyState[key]) {
@@ -456,12 +409,11 @@
 
   function initAudio() {
     KEY_OCTAVES_STR.forEach(keyOctave => {
-      getAudioStartTime(keyOctave);
+      getAudioData(keyOctave);
     });
   }
 
   function initMidi(container) {
-
     const midiStatus = document.createElement('div');
     const baseClassName = 'midi-status';
     midiStatus.className = baseClassName;
