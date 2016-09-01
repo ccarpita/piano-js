@@ -41,11 +41,18 @@
     };
   })();
 
-  const OCTAVES = [1, 2, 3, 4, 5, 6, 7];
-
-  const KEY_OCTAVES = flatMap(OCTAVES, octave => {
-    return KEYS.map(key => [key, octave]);
-  });
+  const KEY_OCTAVES = (() => {
+    const fullOctaves = [1, 2, 3, 4, 5, 6, 7];
+    let keyOctaves = flatMap(fullOctaves, octave => {
+      return KEYS.map(key => [key, octave]);
+    });
+    keyOctaves = [
+      ['A', 0], ['Bb', 0], ['B', 0]
+    ].concat(keyOctaves).concat([
+      ['C', 8]
+    ]);
+    return keyOctaves;
+  })();
 
   const KEY_OCTAVES_STR = KEY_OCTAVES.map(ok => ok[0] + ok[1]);
 
