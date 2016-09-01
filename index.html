@@ -4,9 +4,18 @@
   <link rel="stylesheet" type="text/css" href="assets/stylesheets/piano.css"/>
 </head>
 <body>
+  <!-- Keyboard switch -->
+  <div class="onoffswitch">
+      <input type="checkbox" name="onoffswitch" class="onoffswitch-checkbox" id="myonoffswitch" checked>
+      <label class="onoffswitch-label" for="myonoffswitch">
+          <span class="onoffswitch-inner"></span>
+          <span class="onoffswitch-switch"></span>
+      </label>
+  </div>
   <div class="keyboard"></div>
   <script type="text/javascript" src="assets/javascripts/keyboard.js"></script>
   <script type="text/javascript">
+
 (function(keyboard) {
   keyboard.init(document.querySelector('.keyboard'));
 }(keyboard));
