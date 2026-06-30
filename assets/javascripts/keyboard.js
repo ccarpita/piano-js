@@ -371,61 +371,83 @@
    * Design principles borrowed from the harmonica:
    *   1. Few, large "holes" instead of 88 tiny keys. A single octave of
    *      big tap targets sized for thumbs, not a mouse pointer.
-   *   2. A second, continuous axis of expression. On a harmonica all the
-   *      range comes from the breath, not from aiming at more holes. Here a
-   *      dedicated "Octave Bender" ribbon is worked with the other thumb.
-   *   3. Real bending. Dragging the bender while a hole is held smoothly
-   *      detunes the sustained note across octaves, snapping to whole-octave
-   *      detents — the digital cousin of a draw/overblow bend.
-   *   4. Two-thumb hold: tap holes with one hand, ride the bender with the
-   *      other, the way you cup a harp and modulate breath.
+   *   2. A second axis of expression living inside the same gesture. On a
+   *      harmonica the breath that sounds a hole also bends it — you don't
+   *      reach for a separate control. Here, the vertical drag of the very
+   *      finger holding a hole bends its octave: tap-and-hold = which note,
+   *      slide up/down = bend the octave.
+   *   3. Real bending. The bend is continuous and per-hole — each held finger
+   *      detunes its own note independently across up to a full octave, the
+   *      digital cousin of a draw/overblow bend, snapping back to pitch as you
+   *      slide home.
    */
 
-  // Bender travels continuously over this octave range; new taps snap to the
-  // nearest whole octave, held notes bend smoothly between them.
-  const BENDER_MIN_OCTAVE = 2;
-  const BENDER_MAX_OCTAVE = 6;
   const CENTS_PER_OCTAVE = 1200;
 
-  // Live, fractional octave set by the bender. Starts centered at octave 4.
-  let benderOctave = 4;
+  // Notes are tapped at this octave; vertical drag bends up to +/- one octave.
+  const BASE_OCTAVE = 4;
+  const MAX_BEND_OCTAVES = 1;
 
-  // note-name (e.g. "C") => { key: "C4", octave: 4 } for currently held holes.
+  // How far (px) you drag to reach a full octave of bend.
+  const PIXELS_PER_OCTAVE = 140;
+
+  // note-name (e.g. "C") => active-hole state for currently held holes.
   const activeHoles = {};
 
   function clamp(value, min, max) {
     return Math.min(max, Math.max(min, value));
   }
 
-  function applyBend() {
-    Object.keys(activeHoles).forEach(note => {
-      const hole = activeHoles[note];
-      const source = sourceNodes[hole.key];
-      if (!source) return;
-      const cents = (benderOctave - hole.octave) * CENTS_PER_OCTAVE;
-      source.detune.setTargetAtTime(cents, context.currentTime, 0.01);
-    });
+  function holeDown(note, el, clientY) {
+    if (activeHoles[note]) return;
+    const key = note + BASE_OCTAVE;
+    activeHoles[note] = { key, note, el, startY: clientY, bend: 0 };
+    el.classList.add('active');
+    renderHoleBend(activeHoles[note]);
+    playNote(key, 128, 0);
   }
 
-  function holeDown(note) {
-    if (activeHoles[note]) return;
-    const octave = Math.round(clamp(benderOctave, BENDER_MIN_OCTAVE, BENDER_MAX_OCTAVE));
-    const detune = (benderOctave - octave) * CENTS_PER_OCTAVE;
-    const key = note + octave;
-    activeHoles[note] = { key, octave };
-    playNote(key, 128, detune);
+  function holeBend(note, clientY) {
+    const hole = activeHoles[note];
+    if (!hole) return;
+    // Up is positive bend (higher), down is negative (lower).
+    const offset = (hole.startY - clientY) / PIXELS_PER_OCTAVE;
+    hole.bend = clamp(offset, -MAX_BEND_OCTAVES, MAX_BEND_OCTAVES);
+    const source = sourceNodes[hole.key];
+    if (source) {
+      source.detune.setTargetAtTime(hole.bend * CENTS_PER_OCTAVE, context.currentTime, 0.01);
+    }
+    renderHoleBend(hole);
   }
 
   function holeUp(note) {
     const hole = activeHoles[note];
     if (!hole) return;
     delete activeHoles[note];
+    hole.el.classList.remove('active');
+    hole.el.style.removeProperty('--bend');
+    const label = hole.el.querySelector('.hole-label');
+    if (label) label.textContent = note;
     releaseNote(hole.key);
+  }
+
+  function renderHoleBend(hole) {
+    // Drive the fill direction/intensity via a CSS custom property (-1..1).
+    hole.el.style.setProperty('--bend', hole.bend.toFixed(3));
+    const label = hole.el.querySelector('.hole-label');
+    if (!label) return;
+    const sounding = clamp(Math.round(BASE_OCTAVE + hole.bend), 1, 7);
+    label.textContent = hole.note + sounding;
   }
 
   function buildHarp(container) {
     const harp = createElement('div');
     harp.className = 'harp';
+
+    const hint = createElement('div');
+    hint.className = 'harp-hint';
+    hint.textContent = 'Tap a hole, then slide up or down to bend its octave';
+    harp.appendChild(hint);
 
     // --- holes: one octave of large, chromatic tap targets ---
     const holes = createElement('div');
@@ -443,87 +465,20 @@
       hole.addEventListener('pointerdown', e => {
         e.preventDefault();
         try { hole.setPointerCapture(e.pointerId); } catch (err) {}
-        hole.classList.add('active');
-        holeDown(note);
+        holeDown(note, hole, e.clientY);
       });
-      const lift = () => {
-        hole.classList.remove('active');
-        holeUp(note);
-      };
+      hole.addEventListener('pointermove', e => {
+        if (!activeHoles[note]) return;
+        holeBend(note, e.clientY);
+      });
+      const lift = () => holeUp(note);
       hole.addEventListener('pointerup', lift);
       hole.addEventListener('pointercancel', lift);
       holes.appendChild(hole);
     });
 
-    // --- octave bender: the "breath" ribbon ---
-    const bender = createElement('div');
-    bender.className = 'bender';
-
-    const ticks = createElement('div');
-    ticks.className = 'bender-ticks';
-    for (let o = BENDER_MIN_OCTAVE; o <= BENDER_MAX_OCTAVE; o++) {
-      const tick = createElement('div');
-      tick.className = 'bender-tick';
-      tick.setAttribute('data-octave', o);
-      tick.textContent = o;
-      ticks.appendChild(tick);
-    }
-    const knob = createElement('div');
-    knob.className = 'bender-knob';
-    const readout = createElement('div');
-    readout.className = 'bender-readout';
-    bender.appendChild(ticks);
-    bender.appendChild(knob);
-    bender.appendChild(readout);
-
-    function renderBender() {
-      const span = BENDER_MAX_OCTAVE - BENDER_MIN_OCTAVE;
-      const frac = (benderOctave - BENDER_MIN_OCTAVE) / span;
-      knob.style.left = (frac * 100) + '%';
-      const nearest = Math.round(benderOctave);
-      readout.textContent = 'Octave ' + nearest;
-      Array.prototype.forEach.call(ticks.children, tick => {
-        const o = Number(tick.getAttribute('data-octave'));
-        tick.classList.toggle('near', o === nearest);
-      });
-    }
-
-    function setBenderFromClientX(clientX) {
-      const rect = bender.getBoundingClientRect();
-      const frac = clamp((clientX - rect.left) / rect.width, 0, 1);
-      benderOctave = BENDER_MIN_OCTAVE + frac * (BENDER_MAX_OCTAVE - BENDER_MIN_OCTAVE);
-      renderBender();
-      applyBend();
-    }
-
-    let benderDragging = false;
-    bender.addEventListener('pointerdown', e => {
-      e.preventDefault();
-      benderDragging = true;
-      try { bender.setPointerCapture(e.pointerId); } catch (err) {}
-      bender.classList.add('dragging');
-      setBenderFromClientX(e.clientX);
-    });
-    bender.addEventListener('pointermove', e => {
-      if (!benderDragging) return;
-      setBenderFromClientX(e.clientX);
-    });
-    const endBend = e => {
-      if (!benderDragging) return;
-      benderDragging = false;
-      bender.classList.remove('dragging');
-      // Snap to the nearest octave detent; held notes glide to pitch.
-      benderOctave = clamp(Math.round(benderOctave), BENDER_MIN_OCTAVE, BENDER_MAX_OCTAVE);
-      renderBender();
-      applyBend();
-    };
-    bender.addEventListener('pointerup', endBend);
-    bender.addEventListener('pointercancel', endBend);
-
     harp.appendChild(holes);
-    harp.appendChild(bender);
     container.appendChild(harp);
-    renderBender();
   }
 
   function bindMouse(container) {
