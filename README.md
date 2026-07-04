@@ -18,6 +18,9 @@ aiming at 88 tiny keys, you get:
 - **Continuous, per-hole bending** — each held finger detunes its own note
   independently across up to a full octave, the digital cousin of a
   draw/overblow bend, gliding back to pitch as you slide home.
+- **Register stepper** — the `−` / `+` control shifts the base octave (2–6)
+  for new taps, so you can roam the whole keyboard, not just the three
+  octaves the bend can reach on its own.
 
 The full multi-octave keyboard, MIDI, and computer-keyboard input all still
 work below.

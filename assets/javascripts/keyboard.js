@@ -385,7 +385,11 @@
   const CENTS_PER_OCTAVE = 1200;
 
   // Notes are tapped at this octave; vertical drag bends up to +/- one octave.
-  const BASE_OCTAVE = 4;
+  // The stepper shifts baseOctave; the +/-1 bend headroom is why it's clamped
+  // to 2..6, keeping every sounding octave inside the 1..7 sample range.
+  let baseOctave = 4;
+  const BASE_MIN_OCTAVE = 2;
+  const BASE_MAX_OCTAVE = 6;
   const MAX_BEND_OCTAVES = 1;
 
   // How far (px) you drag to reach a full octave of bend.
@@ -400,8 +404,8 @@
 
   function holeDown(note, el, clientY) {
     if (activeHoles[note]) return;
-    const key = note + BASE_OCTAVE;
-    activeHoles[note] = { key, note, el, startY: clientY, bend: 0 };
+    const key = note + baseOctave;
+    activeHoles[note] = { key, note, el, startY: clientY, bend: 0, base: baseOctave };
     el.classList.add('active');
     renderHoleBend(activeHoles[note]);
     playNote(key, 128, 0);
@@ -436,7 +440,7 @@
     hole.el.style.setProperty('--bend', hole.bend.toFixed(3));
     const label = hole.el.querySelector('.hole-label');
     if (!label) return;
-    const sounding = clamp(Math.round(BASE_OCTAVE + hole.bend), 1, 7);
+    const sounding = clamp(Math.round(hole.base + hole.bend), 1, 7);
     label.textContent = hole.note + sounding;
   }
 
@@ -444,10 +448,45 @@
     const harp = createElement('div');
     harp.className = 'harp';
 
+    // --- register stepper: shift the base octave for new taps ---
+    const stepper = createElement('div');
+    stepper.className = 'harp-stepper';
+    const stepDown = createElement('button');
+    stepDown.className = 'step-btn';
+    stepDown.textContent = '\u2212'; // U+2212 minus, escaped to stay ASCII-safe
+    stepDown.setAttribute('aria-label', 'Octave down');
+    const stepValue = createElement('span');
+    stepValue.className = 'step-value';
+    const stepUp = createElement('button');
+    stepUp.className = 'step-btn';
+    stepUp.textContent = '+';
+    stepUp.setAttribute('aria-label', 'Octave up');
+    stepper.appendChild(stepDown);
+    stepper.appendChild(stepValue);
+    stepper.appendChild(stepUp);
+
+    function renderStepper() {
+      stepValue.textContent = 'Octave ' + baseOctave;
+      stepDown.disabled = baseOctave <= BASE_MIN_OCTAVE;
+      stepUp.disabled = baseOctave >= BASE_MAX_OCTAVE;
+    }
+    function stepBy(delta) {
+      baseOctave = clamp(baseOctave + delta, BASE_MIN_OCTAVE, BASE_MAX_OCTAVE);
+      renderStepper();
+    }
+    stepDown.addEventListener('click', () => stepBy(-1));
+    stepUp.addEventListener('click', () => stepBy(1));
+    renderStepper();
+
     const hint = createElement('div');
     hint.className = 'harp-hint';
     hint.textContent = 'Tap a hole, then slide up or down to bend its octave';
-    harp.appendChild(hint);
+
+    const head = createElement('div');
+    head.className = 'harp-head';
+    head.appendChild(hint);
+    head.appendChild(stepper);
+    harp.appendChild(head);
 
     // --- holes: one octave of large, chromatic tap targets ---
     const holes = createElement('div');

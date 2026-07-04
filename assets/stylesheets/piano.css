@@ -16,12 +16,56 @@
   touch-action: none;
 }
 
+.harp-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 12px;
+}
 .harp-hint {
   color: #8b94a1;
   font-family: system-ui, sans-serif;
   font-size: 12px;
+}
+
+/* Register stepper: nudge the base octave for new taps. */
+.harp-stepper {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: none;
+}
+.step-btn {
+  width: 30px;
+  height: 30px;
+  border: none;
+  border-radius: 8px;
+  background: #2a2f3a;
+  color: #dfe5ee;
+  font-size: 18px;
+  line-height: 1;
+  cursor: pointer;
+  transition: background 0.05s, opacity 0.05s;
+}
+.step-btn:hover:not(:disabled) {
+  background: #353b48;
+}
+.step-btn:active:not(:disabled) {
+  background: #2bbd7c;
+  color: #10231a;
+}
+.step-btn:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
+.step-value {
+  min-width: 72px;
   text-align: center;
-  margin-bottom: 12px;
+  color: #cfd6e0;
+  font-family: system-ui, sans-serif;
+  font-size: 13px;
+  font-weight: 600;
 }
 
 /* Holes: one octave of large, thumb-sized tap targets. The vertical drag of
