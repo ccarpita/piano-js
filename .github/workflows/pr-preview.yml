@@ -1,0 +1,43 @@
+name: PR Preview
+
+# Deploy a live, per-PR preview of the piano app so the tap/bend UX can be
+# tried in a real browser (audio can't be judged from a diff). Each pull
+# request is published to its own subfolder on the gh-pages branch and the
+# preview link is posted as a comment; the preview is removed when the PR is
+# closed or merged.
+#
+# One-time repo setup (Settings -> Pages):
+#   Source: "Deploy from a branch" -> Branch: gh-pages / (root)
+# Preview URL shape:
+#   https://ccarpita.github.io/piano-js/pr-preview/pr-<number>/
+#
+# Note: previews only deploy for PRs from branches in this repo. PRs from
+# forks run with a read-only token and cannot publish (by GitHub's design).
+
+on:
+  pull_request:
+    types:
+      - opened
+      - reopened
+      - synchronize
+      - closed
+
+# Serialize deploys per PR so rapid pushes don't race on the gh-pages branch.
+concurrency: preview-${{ github.ref }}
+
+jobs:
+  deploy-preview:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write        # push the built preview to the gh-pages branch
+      pull-requests: write    # post/update the preview link comment
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # The app is a static site served from the repo root (index.html +
+      # assets/), so there is nothing to build — publish the root directly.
+      - name: Deploy preview
+        uses: rossjrw/pr-preview-action@v1
+        with:
+          source-dir: .
