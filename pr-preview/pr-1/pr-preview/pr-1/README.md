@@ -27,29 +27,6 @@ work below.
 
 Only Chrome/Firefox/Edge is supported, Safari 10+ should work once 2016 MacOS is out of beta.
 
-## Development
-
-The app is plain HTML/CSS/JS with **no build step** — open `index.html` or
-serve the folder:
-
-```sh
-npm run serve        # static server at http://localhost:8080
-```
-
-### Tests
-
-```sh
-npm install
-npm run test:unit    # node:test — pure note/pitch math (assets/javascripts/notes.js)
-npm run test:e2e     # Playwright — loads the app in Chromium, asserts no JS
-                     # errors and that audio actually resumes + plays
-npm test             # both
-```
-
-The e2e suite guards the "no sound" class of bug: it checks the `AudioContext`
-resumes on a user gesture and that a note reaches playback, with zero console
-or page errors. Both suites run in CI on every PR (`.github/workflows/test.yml`).
-
 ## TODO
 
 - Investigate integration of UIOWA samples with MIDI.js, remove unused boilerplate

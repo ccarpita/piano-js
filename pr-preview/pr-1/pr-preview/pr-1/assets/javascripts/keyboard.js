@@ -1,25 +1,8 @@
 (function(global) {
 
-  // Pure note/pitch math, shared with the unit tests (see notes.js).
-  const PianoNotes = global.PianoNotes;
-  const clamp = PianoNotes.clamp;
-
   const context = new AudioContext();
   const compressor = context.createDynamicsCompressor();
   compressor.connect(context.destination);
-
-  /**
-   * Browsers create an AudioContext in the "suspended" state and will only
-   * begin producing sound after resume() is called from within a user
-   * gesture. Without this, every note is silent. Resume on the first pointer,
-   * touch, or key interaction (and defensively before each note).
-   */
-  function unlockAudio() {
-    if (context.state === 'suspended') {
-      return context.resume();
-    }
-    return Promise.resolve();
-  }
 
   /**
    * Number of seconds of release for the closing envelope of the sample.
@@ -204,7 +187,6 @@
 
   function playNote(key, velocity = 128, detuneCents = 0) {
     console.debug('playNote: %o', key, velocity);
-    unlockAudio();
     state.keyActive[key] = true;
     return getAudioData(key).then(audioData => {
       if (!state.keyActive[key]) return;
@@ -260,9 +242,13 @@
   }
 
   function parseMidiNote(value) {
-    // 24 => "C1", 36 => "C2"
+    // 24 => "C1"
+    // 36 => "C2"
     // todo(carpita): support initial 3 keys to left of C1 (code 21-23)
-    return PianoNotes.midiNoteName(value, KEYS);
+    if (value < 21) return;
+    const octave = Math.floor(value / 12) - 1;
+    const step = value % 12;
+    return KEYS[step] + String(octave);
   }
 
   function parseMidiMessage(message) {
@@ -365,10 +351,6 @@
       return listener;
     }
 
-    if (!navigator.requestMIDIAccess) {
-      updateState({hasMidiSupport: false});
-      return Promise.reject(new Error('Web MIDI API not available'));
-    }
     return navigator.requestMIDIAccess()
       .then(generateListener)
       .catch(e => {
@@ -416,6 +398,10 @@
   // note-name (e.g. "C") => active-hole state for currently held holes.
   const activeHoles = {};
 
+  function clamp(value, min, max) {
+    return Math.min(max, Math.max(min, value));
+  }
+
   function holeDown(note, el, clientY) {
     if (activeHoles[note]) return;
     const key = note + baseOctave;
@@ -428,7 +414,9 @@
   function holeBend(note, clientY) {
     const hole = activeHoles[note];
     if (!hole) return;
-    hole.bend = PianoNotes.bendOffset(hole.startY, clientY, PIXELS_PER_OCTAVE, MAX_BEND_OCTAVES);
+    // Up is positive bend (higher), down is negative (lower).
+    const offset = (hole.startY - clientY) / PIXELS_PER_OCTAVE;
+    hole.bend = clamp(offset, -MAX_BEND_OCTAVES, MAX_BEND_OCTAVES);
     const source = sourceNodes[hole.key];
     if (source) {
       source.detune.setTargetAtTime(hole.bend * CENTS_PER_OCTAVE, context.currentTime, 0.01);
@@ -452,7 +440,7 @@
     hole.el.style.setProperty('--bend', hole.bend.toFixed(3));
     const label = hole.el.querySelector('.hole-label');
     if (!label) return;
-    const sounding = PianoNotes.soundingOctave(hole.base, hole.bend);
+    const sounding = clamp(Math.round(hole.base + hole.bend), 1, 7);
     label.textContent = hole.note + sounding;
   }
 
@@ -622,17 +610,11 @@
         }
       });
     }).catch(e => {
-      // MIDI being unavailable (no support, no device, permission denied) is
-      // expected and not an app error — keep it out of the error channel.
-      console.warn('MIDI unavailable:', e && e.message ? e.message : e);
+      console.error(e);
     });
   }
 
   function init(container) {
-    // Resume the AudioContext on the first user gesture (autoplay policy).
-    ['pointerdown', 'touchstart', 'mousedown', 'keydown'].forEach(evt => {
-      window.addEventListener(evt, unlockAudio, { passive: true });
-    });
     initAudio();
     buildHarp(container);
     buildPiano(container);
