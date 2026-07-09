@@ -1,0 +1,19 @@
+{
+  "name": "piano-js",
+  "version": "1.0.0",
+  "description": "A sample-based piano player with a harmonica-inspired tap interface, in vanilla JS.",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/ccarpita/piano-js.git"
+  },
+  "scripts": {
+    "serve": "node scripts/serve.js",
+    "test:unit": "node --test \"tests/unit/*.test.js\"",
+    "test:e2e": "playwright test",
+    "test": "npm run test:unit && npm run test:e2e"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.56.1"
+  }
+}
