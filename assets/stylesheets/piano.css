@@ -14,6 +14,9 @@
   user-select: none;
   -webkit-user-select: none;
   touch-action: none;
+  /* Kill the grey flash and long-press menu iOS Safari adds on taps. */
+  -webkit-tap-highlight-color: transparent;
+  -webkit-touch-callout: none;
 }
 
 .harp-head {
@@ -128,6 +131,8 @@
   overflow: hidden;
   cursor: ns-resize;
   transition: box-shadow 0.05s;
+  /* The vertical bend drag must not scroll/zoom the page on touch. */
+  touch-action: none;
 }
 .hole-natural {
   background: linear-gradient(#ffffff, #e9edf2);
