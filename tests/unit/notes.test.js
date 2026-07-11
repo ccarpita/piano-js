@@ -2,7 +2,7 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { clamp, midiNoteName, bendOffset, soundingOctave } =
+const { clamp, midiNoteName, dragAmount, noteFrequency, harmonicGains } =
   require('../../assets/javascripts/notes.js');
 
 const KEYS = ['C', 'Db', 'D', 'Eb', 'E', 'F', 'Gb', 'G', 'Ab', 'A', 'Bb', 'B'];
@@ -26,29 +26,25 @@ test('midiNoteName returns undefined below the lowest piano key', () => {
   assert.equal(midiNoteName(0, KEYS), undefined);
 });
 
-test('bendOffset: up is positive, down is negative', () => {
-  // dragged up a full octave's worth of pixels
-  assert.equal(bendOffset(200, 60, 140, 1), 1);
-  // dragged down a full octave's worth
-  assert.equal(bendOffset(200, 340, 140, 1), -1);
-  // no movement
-  assert.equal(bendOffset(200, 200, 140, 1), 0);
+test('dragAmount: up is positive, down is negative, clamped', () => {
+  assert.equal(dragAmount(200, 80, 120, 1), 1);    // full up
+  assert.equal(dragAmount(200, 320, 120, 1), -1);  // full down
+  assert.equal(dragAmount(200, 200, 120, 1), 0);   // no movement
+  assert.equal(dragAmount(200, 140, 120, 1), 0.5); // half up
+  assert.equal(dragAmount(200, -400, 120, 1), 1);  // clamps way up
+  assert.equal(dragAmount(200, 900, 120, 1), -1);  // clamps way down
 });
 
-test('bendOffset clamps to +/- maxOctaves', () => {
-  assert.equal(bendOffset(200, -400, 140, 1), 1);   // way up
-  assert.equal(bendOffset(200, 900, 140, 1), -1);   // way down
+test('noteFrequency uses equal temperament with A4=440', () => {
+  assert.ok(Math.abs(noteFrequency('A', 4, KEYS) - 440) < 1e-9);
+  assert.ok(Math.abs(noteFrequency('C', 4, KEYS) - 261.6256) < 1e-3); // middle C
+  assert.ok(Math.abs(noteFrequency('A', 5, KEYS) - 880) < 1e-9);      // octave up
+  assert.ok(Math.abs(noteFrequency('A', 3, KEYS) - 220) < 1e-9);      // octave down
 });
 
-test('bendOffset returns fractional bends mid-drag', () => {
-  assert.equal(bendOffset(200, 130, 140, 1), 0.5);  // half an octave up
-});
-
-test('soundingOctave rounds base+bend and clamps to sample range', () => {
-  assert.equal(soundingOctave(4, 0), 4);
-  assert.equal(soundingOctave(4, 1), 5);
-  assert.equal(soundingOctave(4, -1), 3);
-  assert.equal(soundingOctave(6, 1), 7);   // top of range
-  assert.equal(soundingOctave(2, -1), 1);  // bottom of range
-  assert.equal(soundingOctave(4, 0.6), 5); // rounds up
+test('harmonicGains: up feeds the 3rd, down feeds the 5th', () => {
+  assert.deepEqual(harmonicGains(1, 0.2), { h3: 0.2, h5: 0 });
+  assert.deepEqual(harmonicGains(-1, 0.2), { h3: 0, h5: 0.2 });
+  assert.deepEqual(harmonicGains(0, 0.2), { h3: 0, h5: 0 });
+  assert.deepEqual(harmonicGains(0.5, 0.2), { h3: 0.1, h5: 0 });
 });
