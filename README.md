@@ -21,6 +21,10 @@ aiming at 88 tiny keys, you get:
 - **Register stepper** — the `−` / `+` control shifts the base octave (2–6)
   for new taps, so you can roam the whole keyboard, not just the three
   octaves the bend can reach on its own.
+- **Volume + test tone** — a master volume slider, and a **Test tone** button
+  that plays a sample-free 440Hz tone. If you can hear the tone but not the
+  piano it's a sample/loading issue; if you hear neither it's system output
+  (muted tab, output device, or OS volume).
 
 The full multi-octave keyboard, MIDI, and computer-keyboard input all still
 work below.
