@@ -4,9 +4,26 @@
   const PianoNotes = global.PianoNotes;
   const clamp = PianoNotes.clamp;
 
-  const context = new AudioContext();
+  // Safari (incl. iOS) still ships the prefixed constructor on older versions.
+  const AudioContextClass = global.AudioContext || global.webkitAudioContext;
+  const context = new AudioContextClass();
   const compressor = context.createDynamicsCompressor();
   compressor.connect(context.destination);
+
+  /**
+   * Pick an audio format the browser can actually decode. Safari — desktop and
+   * iOS — does NOT support Ogg Vorbis, so requesting .ogg there yields silence.
+   * We ship both .ogg and .mp3; prefer ogg where supported, else fall back to
+   * mp3 (which every target browser can play).
+   */
+  const AUDIO_EXT = (function() {
+    try {
+      const probe = global.document.createElement('audio');
+      const canOgg = probe.canPlayType && probe.canPlayType('audio/ogg; codecs="vorbis"');
+      if (canOgg === 'probably' || canOgg === 'maybe') return 'ogg';
+    } catch (e) { /* no <audio> support; fall through */ }
+    return 'mp3';
+  }());
 
   // Single master bus every voice routes through, so one gain controls overall
   // volume (and gives us a place to tap for metering/tests).
@@ -20,11 +37,22 @@
    * gesture. Without this, every note is silent. Resume on the first pointer,
    * touch, or key interaction (and defensively before each note).
    */
+  let audioUnlocked = false;
   function unlockAudio() {
-    if (context.state === 'suspended') {
-      return context.resume();
+    const resumed = context.state === 'suspended' ? context.resume() : Promise.resolve();
+    // iOS Safari sometimes needs a real (silent) buffer played inside the first
+    // gesture before it will output anything, even once the context is running.
+    if (!audioUnlocked) {
+      audioUnlocked = true;
+      try {
+        const buffer = context.createBuffer(1, 1, 22050);
+        const source = context.createBufferSource();
+        source.buffer = buffer;
+        source.connect(context.destination);
+        source.start(0);
+      } catch (e) { /* best effort */ }
     }
-    return Promise.resolve();
+    return resumed;
   }
 
   /**
@@ -49,7 +77,14 @@
   }
 
   function setMasterVolume(fraction) {
-    masterGain.gain.setTargetAtTime(fraction, context.currentTime, 0.01);
+    // setTargetAtTime rides the context clock, which is frozen while the
+    // context is suspended (before the first gesture) — set directly there,
+    // and ramp (to avoid zipper noise) only once the clock is running.
+    if (context.state === 'running') {
+      masterGain.gain.setTargetAtTime(fraction, context.currentTime, 0.01);
+    } else {
+      masterGain.gain.value = fraction;
+    }
   }
 
   /**
@@ -184,7 +219,7 @@
   }
 
   function audioPath(key) {
-    return 'assets/audio/Piano.ff.' + key + '.ogg';
+    return 'assets/audio/Piano.ff.' + key + '.' + AUDIO_EXT;
   }
 
   const getAudioData = memoize(function(key) {
@@ -226,7 +261,10 @@
     gainNode.connect(masterGain);
     audioSource.buffer = decodedAudio;
     if (detuneCents) {
-      audioSource.detune.value = detuneCents;
+      // Bend via playbackRate (resampling) rather than detune: for buffer
+      // sources they're equivalent, but detune on AudioBufferSourceNode is
+      // missing on older Safari, whereas playbackRate is universal.
+      audioSource.playbackRate.value = Math.pow(2, detuneCents / CENTS_PER_OCTAVE);
     }
     sourceNodes[key] = audioSource;
     audioSource.connect(gainNode);
@@ -462,7 +500,8 @@
     hole.bend = PianoNotes.bendOffset(hole.startY, clientY, PIXELS_PER_OCTAVE, MAX_BEND_OCTAVES);
     const source = sourceNodes[hole.key];
     if (source) {
-      source.detune.setTargetAtTime(hole.bend * CENTS_PER_OCTAVE, context.currentTime, 0.01);
+      // 2^octaves resampling — see playAudioData for why not detune.
+      source.playbackRate.setTargetAtTime(Math.pow(2, hole.bend), context.currentTime, 0.01);
     }
     renderHoleBend(hole);
   }

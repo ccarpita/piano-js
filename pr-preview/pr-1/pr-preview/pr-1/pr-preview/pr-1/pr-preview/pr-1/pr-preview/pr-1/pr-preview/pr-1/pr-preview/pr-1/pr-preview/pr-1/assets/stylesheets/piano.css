@@ -1,0 +1,185 @@
+.keyboard {
+  font-size: 2em
+}
+
+/* ---- Harp Mode: harmonica-inspired, tap-first interface ---- */
+.harp {
+  font-size: 16px;
+  max-width: 640px;
+  margin: 24px auto;
+  padding: 16px;
+  background: #1c1f26;
+  border-radius: 16px;
+  box-shadow: 0 8px 24px rgba(0,0,0,0.35);
+  user-select: none;
+  -webkit-user-select: none;
+  touch-action: none;
+}
+
+.harp-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+.harp-hint {
+  color: #8b94a1;
+  font-family: system-ui, sans-serif;
+  font-size: 12px;
+}
+
+/* Register stepper: nudge the base octave for new taps. */
+.harp-stepper {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: none;
+}
+.step-btn {
+  width: 30px;
+  height: 30px;
+  border: none;
+  border-radius: 8px;
+  background: #2a2f3a;
+  color: #dfe5ee;
+  font-size: 18px;
+  line-height: 1;
+  cursor: pointer;
+  transition: background 0.05s, opacity 0.05s;
+}
+.step-btn:hover:not(:disabled) {
+  background: #353b48;
+}
+.step-btn:active:not(:disabled) {
+  background: #2bbd7c;
+  color: #10231a;
+}
+.step-btn:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
+.step-value {
+  min-width: 72px;
+  text-align: center;
+  color: #cfd6e0;
+  font-family: system-ui, sans-serif;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+/* Holes: one octave of large, thumb-sized tap targets. The vertical drag of
+   the holding finger bends the octave, so each hole is taller than it is wide
+   to give the bend gesture room to travel. */
+.harp-holes {
+  display: flex;
+  gap: 6px;
+  align-items: stretch;
+  height: 220px;
+}
+.hole {
+  position: relative;
+  flex: 1 1 0;
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+  border-radius: 10px;
+  overflow: hidden;
+  cursor: ns-resize;
+  transition: box-shadow 0.05s;
+}
+.hole-natural {
+  background: linear-gradient(#ffffff, #e9edf2);
+  color: #444;
+}
+.hole-sharp {
+  background: linear-gradient(#3a3f4a, #23272f);
+  color: #cfd6e0;
+  flex-grow: 0.7;
+}
+
+/* Bend fills: an upward green wash for a raised octave, a downward blue wash
+   for a lowered one. Opacity is driven straight from the --bend value
+   (-1..1) the pointer handler writes, clamped by the browser at each end. */
+.hole::before,
+.hole::after {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  height: 60%;
+  pointer-events: none;
+  transition: opacity 0.04s;
+}
+.hole::before {
+  top: 0;
+  background: linear-gradient(rgba(61,214,140,0.85), rgba(61,214,140,0));
+  opacity: var(--bend, 0);
+}
+.hole::after {
+  bottom: 0;
+  background: linear-gradient(rgba(76,160,255,0), rgba(76,160,255,0.85));
+  opacity: calc(-1 * var(--bend, 0));
+}
+.hole-label {
+  position: relative;
+  z-index: 1;
+  padding-bottom: 14px;
+  font-weight: 600;
+  font-family: system-ui, sans-serif;
+  pointer-events: none;
+}
+.hole.active {
+  box-shadow: inset 0 0 18px rgba(61,214,140,0.5), 0 0 12px rgba(61,214,140,0.4);
+}
+.key-container {
+  position:relative;
+  float:left;
+}
+.key {
+  border:1px solid black;
+  transition: 0.05s;
+}
+.key-C, .key-D, .key-E, .key-F, .key-G, .key-A, .key-B {
+  background-color:white;
+  width: 40px;
+  height: 140px;
+  float: left
+}
+
+.key-Bb, .key-Db, .key-Eb, .key-Gb, .key-Ab {
+  background-color:black;
+  z-index:2;
+  left:-11px;
+  width: 20px;
+  height: 84px;
+  position:absolute;
+  float:left;
+}
+
+.key-cs, .key-fs {
+  left:-14px;
+}
+
+.key-ds, .key-as {
+  left: -8px;
+}
+
+.key.active {
+  box-shadow: inset 0 0 15px #3d3
+}
+
+audio {
+  display: none
+}
+
+.midi-status {
+  font-size: 12px;
+  clear:left;
+}
+.midi-status.connected {
+  color: green
+}
+.midi-status.initializing {
+  font-style: italic;
+}

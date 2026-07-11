@@ -8,7 +8,7 @@ const { test, expect } = require('@playwright/test');
  * regression — a suspended context, or a note that never reaches playback.
  */
 function installAudioSpy() {
-  window.__spy = { starts: 0 };
+  window.__spy = { starts: 0, oscFreqs: [] };
   const OrigContext = window.AudioContext;
   window.AudioContext = class extends OrigContext {
     constructor(...args) {
@@ -22,10 +22,21 @@ function installAudioSpy() {
       const src = super.createBufferSource();
       const origStart = src.start.bind(src);
       src.start = (...a) => {
-        window.__spy.starts++;
+        // Ignore the 1-sample silent buffer used to unlock iOS audio; only
+        // real (long) sample buffers count as a note reaching playback.
+        if (src.buffer && src.buffer.length > 1) window.__spy.starts++;
         return origStart(...a);
       };
       return src;
+    }
+    createOscillator() {
+      const osc = super.createOscillator();
+      const origStart = osc.start.bind(osc);
+      osc.start = (...a) => {
+        window.__spy.oscFreqs.push(osc.frequency.value);
+        return origStart(...a);
+      };
+      return osc;
     }
   };
   // Mirror anything connected to the destination into the analyser so we can
@@ -201,28 +212,38 @@ test.describe('Piano.js Harp Mode', () => {
     }
   });
 
-  test('vertical drag bends the hole octave', async ({ page }) => {
+  test('vertical drag mixes in the 3rd and 5th harmonics', async ({ page }) => {
     const box = (await holeCenter(page, 'C')).box;
     const cx = box.x + box.width / 2;
     const startY = box.y + box.height - 20;
     const label = page.locator('.hole-C .hole-label');
+    const tilt = () =>
+      page.evaluate(() =>
+        Number(document.querySelector('.hole-C').style.getPropertyValue('--tilt') || '0'));
 
     await page.mouse.move(cx, startY);
     await page.mouse.down();
     await expect(label).toHaveText('C4');
 
-    // Slide up a full octave's worth of pixels (>140px) -> C5.
-    await page.mouse.move(cx, startY - 150);
-    await expect(label).toHaveText('C5');
+    // Two partials are layered at 3x and 5x the fundamental (C4 ~261.63 Hz).
+    const f = 261.6256;
+    const freqs = await page.evaluate(() => window.__spy.oscFreqs);
+    expect(freqs.some((x) => Math.abs(x - 3 * f) < 1), 'a 3rd-harmonic partial').toBe(true);
+    expect(freqs.some((x) => Math.abs(x - 5 * f) < 1), 'a 5th-harmonic partial').toBe(true);
 
-    // Slide well below the start (same column) -> clamps one octave down -> C3.
-    await page.mouse.move(cx, startY + 300);
-    await expect(label).toHaveText('C3');
+    // Slide up -> positive tilt (3rd-harmonic emphasis).
+    await page.mouse.move(cx, startY - 130);
+    await expect.poll(tilt).toBeGreaterThan(0.5);
 
-    // Release resets the label to the bare note name.
+    // Slide down past the start (same column) -> negative tilt (5th harmonic).
+    await page.mouse.move(cx, startY + 130);
+    await expect.poll(tilt).toBeLessThan(-0.5);
+
+    // The pitch never changes — the label stays at the base octave throughout.
+    await expect(label).toHaveText('C4');
+
     await page.mouse.up();
     await expect(label).toHaveText('C');
-
     expect(errors).toEqual([]);
   });
 });

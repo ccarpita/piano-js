@@ -1,3 +1,10 @@
 .DS_Store
 samples/*
 samples-bak/*
+
+# Node / test tooling
+node_modules/
+test-results/
+playwright-report/
+blob-report/
+.last-run.json

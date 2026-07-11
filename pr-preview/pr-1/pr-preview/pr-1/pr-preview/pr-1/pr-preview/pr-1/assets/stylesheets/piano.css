@@ -68,6 +68,47 @@
   font-weight: 600;
 }
 
+/* Audio controls: master volume + sample-free test tone. */
+.harp-audio {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  margin-bottom: 12px;
+}
+.test-tone {
+  border: none;
+  border-radius: 8px;
+  padding: 7px 12px;
+  background: #2a2f3a;
+  color: #dfe5ee;
+  font-family: system-ui, sans-serif;
+  font-size: 13px;
+  cursor: pointer;
+  transition: background 0.05s;
+}
+.test-tone:hover {
+  background: #353b48;
+}
+.test-tone:active {
+  background: #2bbd7c;
+  color: #10231a;
+}
+.vol-wrap {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: 1;
+}
+.vol-icon {
+  font-size: 15px;
+  opacity: 0.8;
+}
+.vol {
+  flex: 1;
+  accent-color: #2bbd7c;
+  cursor: pointer;
+}
+
 /* Holes: one octave of large, thumb-sized tap targets. The vertical drag of
    the holding finger bends the octave, so each hole is taller than it is wide
    to give the bend gesture room to travel. */
