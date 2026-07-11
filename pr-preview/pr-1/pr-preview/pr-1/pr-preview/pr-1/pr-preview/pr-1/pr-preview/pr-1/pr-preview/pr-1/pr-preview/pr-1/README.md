@@ -1,0 +1,38 @@
+# Piano.JS
+
+A basic piano synth, using University of Iowa public domain samples, implemented in CSS/JS.
+
+See: https://ccarpita.github.io/piano-js/
+
+## Harp Mode
+
+A harmonica-inspired, tap-first interface designed for touch. Instead of
+aiming at 88 tiny keys, you get:
+
+- **One octave of large "holes"** — big, thumb-sized chromatic tap targets.
+- **Bend by sliding the same finger** — the breath that sounds a hole on a
+  harmonica also bends it, so there's no separate control here. Tap and hold
+  a hole, then slide your finger **up to raise** or **down to lower** its
+  octave. The note's label updates (e.g. `C4` → `C5`) and a colored wash
+  shows the bend direction.
+- **Continuous, per-hole bending** — each held finger detunes its own note
+  independently across up to a full octave, the digital cousin of a
+  draw/overblow bend, gliding back to pitch as you slide home.
+- **Register stepper** — the `−` / `+` control shifts the base octave (2–6)
+  for new taps, so you can roam the whole keyboard, not just the three
+  octaves the bend can reach on its own.
+
+The full multi-octave keyboard, MIDI, and computer-keyboard input all still
+work below.
+
+Only Chrome/Firefox/Edge is supported, Safari 10+ should work once 2016 MacOS is out of beta.
+
+## TODO
+
+- Investigate integration of UIOWA samples with MIDI.js, remove unused boilerplate
+- Package for distribution, download sound-font as postinstall
+- Better browser support with Babel
+
+## License
+
+MIT

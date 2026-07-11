@@ -14,6 +14,9 @@ function installAudioSpy() {
     constructor(...args) {
       super(...args);
       window.__audioCtx = this;
+      // Analyser tap so tests can read the real signal reaching the output.
+      window.__analyser = this.createAnalyser();
+      window.__analyser.fftSize = 2048;
     }
     createBufferSource() {
       const src = super.createBufferSource();
@@ -24,6 +27,28 @@ function installAudioSpy() {
       };
       return src;
     }
+  };
+  // Mirror anything connected to the destination into the analyser so we can
+  // measure the master output amplitude.
+  const proto = window.AudioNode.prototype;
+  const origConnect = proto.connect;
+  proto.connect = function (dest, ...rest) {
+    const result = origConnect.call(this, dest, ...rest);
+    try {
+      if (window.__audioCtx && dest === window.__audioCtx.destination && window.__analyser) {
+        origConnect.call(this, window.__analyser);
+      }
+    } catch (e) { /* not an audio-node destination */ }
+    return result;
+  };
+  window.__outputPeak = () => {
+    const a = window.__analyser;
+    if (!a) return -1;
+    const buf = new Float32Array(a.fftSize);
+    a.getFloatTimeDomainData(buf);
+    let peak = 0;
+    for (const v of buf) { const x = Math.abs(v); if (x > peak) peak = x; }
+    return peak;
   };
 }
 
@@ -77,6 +102,38 @@ test.describe('Piano.js Harp Mode', () => {
       .toBeGreaterThan(0);
 
     expect(errors, 'no errors while playing').toEqual([]);
+  });
+
+  test('the test tone produces audible master output', async ({ page }) => {
+    await page.getByRole('button', { name: 'Test tone' }).click();
+    // The oscillator needs no samples, so output should appear promptly.
+    let peak = 0;
+    await expect
+      .poll(async () => {
+        const p = await page.evaluate(() => window.__outputPeak());
+        if (p > peak) peak = p;
+        return peak;
+      }, { timeout: 5000 })
+      .toBeGreaterThan(0.01);
+    expect(errors).toEqual([]);
+  });
+
+  test('the volume slider mutes the master output', async ({ page }) => {
+    // Turn the master volume to zero, then the test tone should stay silent.
+    await page.getByLabel('Master volume').evaluate((el) => {
+      el.value = '0';
+      el.dispatchEvent(new Event('input', { bubbles: true }));
+    });
+    await page.waitForTimeout(150); // let the gain ramp settle to zero
+    await page.getByRole('button', { name: 'Test tone' }).click();
+
+    let peak = 0;
+    for (let i = 0; i < 20; i++) {
+      peak = Math.max(peak, await page.evaluate(() => window.__outputPeak()));
+      await page.waitForTimeout(50);
+    }
+    expect(peak, 'output stays silent at zero volume').toBeLessThan(0.01);
+    expect(errors).toEqual([]);
   });
 
   test('vertical drag bends the hole octave', async ({ page }) => {

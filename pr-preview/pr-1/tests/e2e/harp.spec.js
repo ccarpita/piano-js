@@ -85,14 +85,21 @@ test.describe('Piano.js Harp Mode', () => {
     expect(errors, 'no console/page errors on load').toEqual([]);
   });
 
-  test('tapping a hole resumes audio and plays a note', async ({ page }) => {
-    const hole = page.locator('.hole-C');
+  /** Center point of a hole, for driving the real mouse/pointer. */
+  async function holeCenter(page, note) {
+    const box = await page.locator('.hole-' + note).boundingBox();
+    return { x: box.x + box.width / 2, y: box.y + box.height / 2, box };
+  }
+
+  test('pressing a hole resumes audio and plays a note', async ({ page }) => {
+    const c = await holeCenter(page, 'C');
     // Context starts suspended under the browser autoplay policy...
     expect(await page.evaluate(() => window.__audioCtx.state)).toBe('suspended');
 
-    await hole.dispatchEvent('pointerdown');
+    await page.mouse.move(c.x, c.y);
+    await page.mouse.down();
 
-    // ...and the tap gesture must resume it.
+    // ...and the gesture must resume it.
     await expect
       .poll(() => page.evaluate(() => window.__audioCtx.state))
       .toBe('running');
@@ -100,8 +107,30 @@ test.describe('Piano.js Harp Mode', () => {
     await expect
       .poll(() => page.evaluate(() => window.__spy.starts), { timeout: 15000 })
       .toBeGreaterThan(0);
+    await page.mouse.up();
 
     expect(errors, 'no errors while playing').toEqual([]);
+  });
+
+  test('gliding across holes plays each one without a separate tap', async ({ page }) => {
+    const c = await holeCenter(page, 'C');
+    const e = await holeCenter(page, 'E');
+    const y = c.y;
+
+    await page.mouse.move(c.x, y);
+    await page.mouse.down();
+    // Slide sideways from C to E; every column crossed should sound.
+    const steps = 24;
+    for (let i = 1; i <= steps; i++) {
+      await page.mouse.move(c.x + ((e.x - c.x) * i) / steps, y);
+    }
+    await page.mouse.up();
+
+    // C, Db, D, Eb, E => several distinct notes triggered from one gesture.
+    await expect
+      .poll(() => page.evaluate(() => window.__spy.starts), { timeout: 15000 })
+      .toBeGreaterThanOrEqual(3);
+    expect(errors).toEqual([]);
   });
 
   test('the test tone produces audible master output', async ({ page }) => {
@@ -136,56 +165,62 @@ test.describe('Piano.js Harp Mode', () => {
     expect(errors).toEqual([]);
   });
 
-  test('falls back to mp3 when Ogg is unsupported (Safari)', async ({ page }) => {
-    // Simulate a browser (Safari) that cannot decode Ogg Vorbis.
-    await page.addInitScript(() => {
-      const proto = window.HTMLMediaElement.prototype;
-      const orig = proto.canPlayType;
-      proto.canPlayType = function (type) {
-        return /ogg/i.test(type) ? '' : orig.call(this, type);
-      };
-    });
-    const sampleExts = [];
-    page.on('request', (req) => {
-      const m = req.url().match(/Piano\.ff\.[^/]+\.(ogg|mp3)$/);
-      if (m) sampleExts.push(m[1]);
-    });
+  test('falls back to mp3 when Ogg is unsupported (Safari)', async ({ browser, baseURL }) => {
+    // Use a dedicated page so no Ogg load from the shared page's navigation can
+    // contaminate the request log.
+    const page = await browser.newPage();
+    try {
+      await page.addInitScript(installAudioSpy);
+      // Simulate a browser (Safari) that cannot decode Ogg Vorbis.
+      await page.addInitScript(() => {
+        const proto = window.HTMLMediaElement.prototype;
+        const orig = proto.canPlayType;
+        proto.canPlayType = function (type) {
+          return /ogg/i.test(type) ? '' : orig.call(this, type);
+        };
+      });
+      const sampleExts = [];
+      page.on('request', (req) => {
+        const m = req.url().match(/Piano\.ff\.[^/]+\.(ogg|mp3)$/);
+        if (m) sampleExts.push(m[1]);
+      });
 
-    await page.goto('/index.html', { waitUntil: 'domcontentloaded' });
-    await page.locator('.hole-C').dispatchEvent('pointerdown');
+      await page.goto(baseURL + '/index.html', { waitUntil: 'domcontentloaded' });
+      const box = await page.locator('.hole-C').boundingBox();
+      await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+      await page.mouse.down();
 
-    await expect
-      .poll(() => sampleExts.includes('mp3'))
-      .toBe(true);
-    expect(sampleExts, 'must not request Ogg on a non-Ogg browser').not.toContain('ogg');
-    // And a note still reaches playback via the mp3 sample.
-    await expect
-      .poll(() => page.evaluate(() => window.__spy.starts), { timeout: 15000 })
-      .toBeGreaterThan(0);
+      await expect.poll(() => sampleExts.includes('mp3')).toBe(true);
+      expect(sampleExts, 'must not request Ogg on a non-Ogg browser').not.toContain('ogg');
+      // And a note still reaches playback via the mp3 sample.
+      await expect
+        .poll(() => page.evaluate(() => window.__spy.starts), { timeout: 15000 })
+        .toBeGreaterThan(0);
+    } finally {
+      await page.close();
+    }
   });
 
   test('vertical drag bends the hole octave', async ({ page }) => {
-    const hole = page.locator('.hole-C');
-    const box = /** @type {{x:number,y:number,width:number,height:number}} */ (
-      await hole.boundingBox()
-    );
+    const box = (await holeCenter(page, 'C')).box;
     const cx = box.x + box.width / 2;
     const startY = box.y + box.height - 20;
-    const label = hole.locator('.hole-label');
+    const label = page.locator('.hole-C .hole-label');
 
-    await hole.dispatchEvent('pointerdown', { clientX: cx, clientY: startY });
+    await page.mouse.move(cx, startY);
+    await page.mouse.down();
     await expect(label).toHaveText('C4');
 
     // Slide up a full octave's worth of pixels (>140px) -> C5.
-    await hole.dispatchEvent('pointermove', { clientX: cx, clientY: startY - 150 });
+    await page.mouse.move(cx, startY - 150);
     await expect(label).toHaveText('C5');
 
-    // Slide well below the start -> clamps at one octave down -> C3.
-    await hole.dispatchEvent('pointermove', { clientX: cx, clientY: startY + 300 });
+    // Slide well below the start (same column) -> clamps one octave down -> C3.
+    await page.mouse.move(cx, startY + 300);
     await expect(label).toHaveText('C3');
 
     // Release resets the label to the bare note name.
-    await hole.dispatchEvent('pointerup', { clientX: cx, clientY: startY + 300 });
+    await page.mouse.up();
     await expect(label).toHaveText('C');
 
     expect(errors).toEqual([]);

@@ -458,63 +458,91 @@
    * Design principles borrowed from the harmonica:
    *   1. Few, large "holes" instead of 88 tiny keys. A single octave of
    *      big tap targets sized for thumbs, not a mouse pointer.
-   *   2. A second axis of expression living inside the same gesture. On a
-   *      harmonica the breath that sounds a hole also bends it — you don't
-   *      reach for a separate control. Here, the vertical drag of the very
-   *      finger holding a hole bends its octave: tap-and-hold = which note,
-   *      slide up/down = bend the octave.
-   *   3. Real bending. The bend is continuous and per-hole — each held finger
-   *      detunes its own note independently across up to a full octave, the
-   *      digital cousin of a draw/overblow bend, snapping back to pitch as you
-   *      slide home.
+   *   2. Glide to play. Press and slide your finger sideways across the holes
+   *      and each one sounds as you reach it — no separate tap per note, the
+   *      way you slide your mouth across a harp.
+   *   3. A second axis in the same gesture. Horizontal position picks the
+   *      hole; vertical position bends it. Slide up/down while on a hole to
+   *      bend its octave up to a full step — the digital cousin of a
+   *      draw/overblow bend. Because the two axes are split, gliding along the
+   *      row stays in tune while deliberate up/down movement bends.
    */
 
   const CENTS_PER_OCTAVE = 1200;
 
-  // Notes are tapped at this octave; vertical drag bends up to +/- one octave.
-  // The stepper shifts baseOctave; the +/-1 bend headroom is why it's clamped
-  // to 2..6, keeping every sounding octave inside the 1..7 sample range.
+  // Notes play at this octave; vertical drag bends up to +/- one octave. The
+  // stepper shifts baseOctave; the +/-1 bend headroom is why it's clamped to
+  // 2..6, keeping every sounding octave inside the 1..7 sample range.
   let baseOctave = 4;
   const BASE_MIN_OCTAVE = 2;
   const BASE_MAX_OCTAVE = 6;
   const MAX_BEND_OCTAVES = 1;
 
-  // How far (px) you drag to reach a full octave of bend.
+  // How far (px) you drag vertically to reach a full octave of bend.
   const PIXELS_PER_OCTAVE = 140;
 
-  // note-name (e.g. "C") => active-hole state for currently held holes.
-  const activeHoles = {};
+  // The holes container, set in buildHarp; used to hit-test holes by column.
+  let holesEl = null;
 
-  function holeDown(note, el, clientY) {
-    if (activeHoles[note]) return;
+  // pointerId => state for each finger currently gliding over the holes.
+  const pointerHoles = {};
+
+  /**
+   * The hole under a given horizontal position, chosen by column only: we
+   * sample at the holes' vertical midline so the current hole doesn't change
+   * when the finger moves up or down to bend (or past the row's edges).
+   */
+  function holeAtX(clientX) {
+    if (!holesEl) return null;
+    const rect = holesEl.getBoundingClientRect();
+    const midY = rect.top + rect.height / 2;
+    const el = global.document.elementFromPoint(clientX, midY);
+    return el && el.closest ? el.closest('.hole') : null;
+  }
+
+  function startHole(pointerId, holeEl, clientY) {
+    const note = holeEl.getAttribute('data-note');
     const key = note + baseOctave;
-    activeHoles[note] = { key, note, el, startY: clientY, bend: 0, base: baseOctave };
-    el.classList.add('active');
-    renderHoleBend(activeHoles[note]);
+    const state = { note, key, el: holeEl, startY: clientY, base: baseOctave, bend: 0 };
+    pointerHoles[pointerId] = state;
+    holeEl.classList.add('active');
+    renderHoleBend(state);
     playNote(key, 128, 0);
   }
 
-  function holeBend(note, clientY) {
-    const hole = activeHoles[note];
-    if (!hole) return;
-    hole.bend = PianoNotes.bendOffset(hole.startY, clientY, PIXELS_PER_OCTAVE, MAX_BEND_OCTAVES);
-    const source = sourceNodes[hole.key];
-    if (source) {
-      // 2^octaves resampling — see playAudioData for why not detune.
-      source.playbackRate.setTargetAtTime(Math.pow(2, hole.bend), context.currentTime, 0.01);
-    }
-    renderHoleBend(hole);
+  function releaseHoleState(state) {
+    state.el.classList.remove('active');
+    state.el.style.removeProperty('--bend');
+    const label = state.el.querySelector('.hole-label');
+    if (label) label.textContent = state.note;
+    releaseNote(state.key);
   }
 
-  function holeUp(note) {
-    const hole = activeHoles[note];
-    if (!hole) return;
-    delete activeHoles[note];
-    hole.el.classList.remove('active');
-    hole.el.style.removeProperty('--bend');
-    const label = hole.el.querySelector('.hole-label');
-    if (label) label.textContent = note;
-    releaseNote(hole.key);
+  function movePointer(pointerId, clientX, clientY) {
+    const state = pointerHoles[pointerId];
+    if (!state) return;
+    const holeEl = holeAtX(clientX);
+    if (holeEl && holeEl !== state.el) {
+      // Glissando: crossed into a new column — release the old, sound the new.
+      releaseHoleState(state);
+      startHole(pointerId, holeEl, clientY);
+      return;
+    }
+    // Same hole (or in a gap): vertical movement bends it.
+    state.bend = PianoNotes.bendOffset(state.startY, clientY, PIXELS_PER_OCTAVE, MAX_BEND_OCTAVES);
+    const source = sourceNodes[state.key];
+    if (source) {
+      // 2^octaves resampling — see playAudioData for why not detune.
+      source.playbackRate.setTargetAtTime(Math.pow(2, state.bend), context.currentTime, 0.01);
+    }
+    renderHoleBend(state);
+  }
+
+  function endPointer(pointerId) {
+    const state = pointerHoles[pointerId];
+    if (!state) return;
+    delete pointerHoles[pointerId];
+    releaseHoleState(state);
   }
 
   function renderHoleBend(hole) {
@@ -562,7 +590,7 @@
 
     const hint = createElement('div');
     hint.className = 'harp-hint';
-    hint.textContent = 'Tap a hole, then slide up or down to bend its octave';
+    hint.textContent = 'Slide across the holes to play; slide up or down to bend';
 
     const head = createElement('div');
     head.className = 'harp-head';
@@ -602,6 +630,7 @@
     // --- holes: one octave of large, chromatic tap targets ---
     const holes = createElement('div');
     holes.className = 'harp-holes';
+    holesEl = holes;
     KEYS.forEach(note => {
       const isSharp = note.length > 1;
       const hole = createElement('div');
@@ -611,21 +640,28 @@
       label.className = 'hole-label';
       label.textContent = note;
       hole.appendChild(label);
-
-      hole.addEventListener('pointerdown', e => {
-        e.preventDefault();
-        try { hole.setPointerCapture(e.pointerId); } catch (err) {}
-        holeDown(note, hole, e.clientY);
-      });
-      hole.addEventListener('pointermove', e => {
-        if (!activeHoles[note]) return;
-        holeBend(note, e.clientY);
-      });
-      const lift = () => holeUp(note);
-      hole.addEventListener('pointerup', lift);
-      hole.addEventListener('pointercancel', lift);
       holes.appendChild(hole);
     });
+
+    // Pointer handling lives on the container, not per hole: we capture the
+    // pointer here so a finger can glide across columns (and beyond the row's
+    // vertical bounds while bending) and keep sending moves. Each pointerId is
+    // tracked independently, so multiple fingers can play at once.
+    holes.addEventListener('pointerdown', e => {
+      const holeEl = holeAtX(e.clientX);
+      if (!holeEl) return;
+      e.preventDefault();
+      try { holes.setPointerCapture(e.pointerId); } catch (err) {}
+      startHole(e.pointerId, holeEl, e.clientY);
+    });
+    holes.addEventListener('pointermove', e => {
+      if (!pointerHoles[e.pointerId]) return;
+      e.preventDefault();
+      movePointer(e.pointerId, e.clientX, e.clientY);
+    });
+    const lift = e => endPointer(e.pointerId);
+    holes.addEventListener('pointerup', lift);
+    holes.addEventListener('pointercancel', lift);
 
     harp.appendChild(holes);
     container.appendChild(harp);

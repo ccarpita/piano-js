@@ -8,6 +8,12 @@
   const compressor = context.createDynamicsCompressor();
   compressor.connect(context.destination);
 
+  // Single master bus every voice routes through, so one gain controls overall
+  // volume (and gives us a place to tap for metering/tests).
+  const masterGain = context.createGain();
+  masterGain.gain.value = 1.0;
+  masterGain.connect(context.destination);
+
   /**
    * Browsers create an AudioContext in the "suspended" state and will only
    * begin producing sound after resume() is called from within a user
@@ -19,6 +25,31 @@
       return context.resume();
     }
     return Promise.resolve();
+  }
+
+  /**
+   * Play a short 440Hz sine through the master bus. It needs no samples or
+   * network, so it isolates the audio path: hear this but not the piano => a
+   * sample/loading issue; hear nothing => system output / volume / muted tab.
+   */
+  function playTestTone() {
+    unlockAudio();
+    const now = context.currentTime;
+    const osc = context.createOscillator();
+    const env = context.createGain();
+    osc.type = 'sine';
+    osc.frequency.value = 440;
+    env.gain.setValueAtTime(0, now);
+    env.gain.linearRampToValueAtTime(0.3, now + 0.02);
+    env.gain.setTargetAtTime(0, now + 0.4, 0.08);
+    osc.connect(env);
+    env.connect(masterGain);
+    osc.start(now);
+    osc.stop(now + 0.8);
+  }
+
+  function setMasterVolume(fraction) {
+    masterGain.gain.setTargetAtTime(fraction, context.currentTime, 0.01);
   }
 
   /**
@@ -192,7 +223,7 @@
     gainNode.gain.value = 0;
     gainNode.gain.linearRampToValueAtTime(gain || 1.0, context.currentTime + NOTE_ATTACK_SECONDS);
     gainNodes[key] = gainNode;
-    gainNode.connect(context.destination);
+    gainNode.connect(masterGain);
     audioSource.buffer = decodedAudio;
     if (detuneCents) {
       audioSource.detune.value = detuneCents;
@@ -499,6 +530,35 @@
     head.appendChild(hint);
     head.appendChild(stepper);
     harp.appendChild(head);
+
+    // --- audio controls: master volume + a sample-free test tone ---
+    const audio = createElement('div');
+    audio.className = 'harp-audio';
+
+    const testBtn = createElement('button');
+    testBtn.className = 'test-tone';
+    testBtn.textContent = 'Test tone';
+    testBtn.addEventListener('click', playTestTone);
+
+    const volWrap = createElement('label');
+    volWrap.className = 'vol-wrap';
+    const volIcon = createElement('span');
+    volIcon.className = 'vol-icon';
+    volIcon.textContent = '🔊';
+    const vol = createElement('input');
+    vol.type = 'range';
+    vol.className = 'vol';
+    vol.min = '0';
+    vol.max = '150';
+    vol.value = '100';
+    vol.setAttribute('aria-label', 'Master volume');
+    vol.addEventListener('input', () => setMasterVolume(Number(vol.value) / 100));
+    volWrap.appendChild(volIcon);
+    volWrap.appendChild(vol);
+
+    audio.appendChild(testBtn);
+    audio.appendChild(volWrap);
+    harp.appendChild(audio);
 
     // --- holes: one octave of large, chromatic tap targets ---
     const holes = createElement('div');
