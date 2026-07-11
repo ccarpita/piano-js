@@ -136,6 +136,34 @@ test.describe('Piano.js Harp Mode', () => {
     expect(errors).toEqual([]);
   });
 
+  test('falls back to mp3 when Ogg is unsupported (Safari)', async ({ page }) => {
+    // Simulate a browser (Safari) that cannot decode Ogg Vorbis.
+    await page.addInitScript(() => {
+      const proto = window.HTMLMediaElement.prototype;
+      const orig = proto.canPlayType;
+      proto.canPlayType = function (type) {
+        return /ogg/i.test(type) ? '' : orig.call(this, type);
+      };
+    });
+    const sampleExts = [];
+    page.on('request', (req) => {
+      const m = req.url().match(/Piano\.ff\.[^/]+\.(ogg|mp3)$/);
+      if (m) sampleExts.push(m[1]);
+    });
+
+    await page.goto('/index.html', { waitUntil: 'domcontentloaded' });
+    await page.locator('.hole-C').dispatchEvent('pointerdown');
+
+    await expect
+      .poll(() => sampleExts.includes('mp3'))
+      .toBe(true);
+    expect(sampleExts, 'must not request Ogg on a non-Ogg browser').not.toContain('ogg');
+    // And a note still reaches playback via the mp3 sample.
+    await expect
+      .poll(() => page.evaluate(() => window.__spy.starts), { timeout: 15000 })
+      .toBeGreaterThan(0);
+  });
+
   test('vertical drag bends the hole octave', async ({ page }) => {
     const hole = page.locator('.hole-C');
     const box = /** @type {{x:number,y:number,width:number,height:number}} */ (
