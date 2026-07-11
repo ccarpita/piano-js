@@ -1,0 +1,17 @@
+<html>
+<head>
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1"/>
+  <title>Piano.js</title>
+  <link rel="stylesheet" type="text/css" href="assets/stylesheets/piano.css"/>
+</head>
+<body>
+  <div class="keyboard"></div>
+  <script type="text/javascript" src="assets/javascripts/keyboard.js"></script>
+  <script type="text/javascript">
+(function(keyboard) {
+  keyboard.init(document.querySelector('.keyboard'));
+}(keyboard));
+  </script>
+</body>
+</html>
