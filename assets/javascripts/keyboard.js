@@ -7,29 +7,15 @@
   // Safari (incl. iOS) still ships the prefixed constructor on older versions.
   const AudioContextClass = global.AudioContext || global.webkitAudioContext;
   const context = new AudioContextClass();
-  const compressor = context.createDynamicsCompressor();
-  compressor.connect(context.destination);
-
-  /**
-   * Pick an audio format the browser can actually decode. Safari — desktop and
-   * iOS — does NOT support Ogg Vorbis, so requesting .ogg there yields silence.
-   * We ship both .ogg and .mp3; prefer ogg where supported, else fall back to
-   * mp3 (which every target browser can play).
-   */
-  const AUDIO_EXT = (function() {
-    try {
-      const probe = global.document.createElement('audio');
-      const canOgg = probe.canPlayType && probe.canPlayType('audio/ogg; codecs="vorbis"');
-      if (canOgg === 'probably' || canOgg === 'maybe') return 'ogg';
-    } catch (e) { /* no <audio> support; fall through */ }
-    return 'mp3';
-  }());
 
   // Single master bus every voice routes through, so one gain controls overall
-  // volume (and gives us a place to tap for metering/tests).
+  // volume. It feeds a compressor before the output to keep chords and fast
+  // glides from clipping.
+  const compressor = context.createDynamicsCompressor();
+  compressor.connect(context.destination);
   const masterGain = context.createGain();
   masterGain.gain.value = 1.0;
-  masterGain.connect(context.destination);
+  masterGain.connect(compressor);
 
   /**
    * Browsers create an AudioContext in the "suspended" state and will only
@@ -56,9 +42,9 @@
   }
 
   /**
-   * Play a short 440Hz sine through the master bus. It needs no samples or
-   * network, so it isolates the audio path: hear this but not the piano => a
-   * sample/loading issue; hear nothing => system output / volume / muted tab.
+   * Play a short 440Hz sine through the master bus. It isolates the audio
+   * path: hear this but not the notes => a synth bug; hear nothing at all =>
+   * system output / volume / muted tab.
    */
   function playTestTone() {
     unlockAudio();
@@ -86,16 +72,6 @@
       masterGain.gain.value = fraction;
     }
   }
-
-  /**
-   * Number of seconds of release for the closing envelope of the sample.
-   */
-  const NOTE_RELEASE_SECONDS = 0.25;
-
-  /**
-   * Number of seconds to ramp note attack.
-   */
-  const NOTE_ATTACK_SECONDS = 0.0001;
 
   const KEYS = [
     'C', 'Db', 'D', 'Eb', 'E', 'F',
@@ -153,8 +129,7 @@
 
   const state = {
     hasMidiSupport: null,
-    hasMidiInput: null,
-    keyActive: {}
+    hasMidiInput: null
   };
 
   const subscriptions = {};
@@ -212,74 +187,102 @@
     return global.document.createElement(tag);
   }
 
-  function audioPath(key) {
-    return 'assets/audio/Piano.ff.' + key + '.' + AUDIO_EXT;
-  }
+  // --- Synthesized voice: a harmonica crossed with a flute ---------------
+  // The samples were far too heavy for a mobile site, so notes are generated
+  // on the fly. The timbre is a flute-dominant fundamental (nearly a pure
+  // sine) with harmonica reediness added through odd harmonics, plus a breath
+  // of filtered noise and a gentle vibrato — no downloads, zero latency.
 
-  const getAudioData = memoize(function(key) {
-    console.debug('getAudioData', key);
-    if (!key) {
-      return Promise.reject(new Error('key must be defined'));
-    }
-    return new Promise((resolve, reject) => {
-      const req = new XMLHttpRequest();
-      req.open('GET', audioPath(key));
-      req.responseType = 'arraybuffer';
-      req.onload = () => {
-        const buffer = req.response;
-        context.decodeAudioData(buffer, decoded => {
-          resolve(decoded);
-        });
-      };
-      req.onerror = reject;
-      req.send();
-    });
-  });
+  // Additive harmonic recipe as sine amplitudes (index 0 = DC). Strong
+  // fundamental (flute), reedy odd partials (harmonica), soft roll-off.
+  const VOICE_WAVE = context.createPeriodicWave(
+    Float32Array.of(0, 0, 0, 0, 0, 0, 0, 0, 0),
+    Float32Array.of(0, 1.0, 0.22, 0.34, 0.10, 0.20, 0.06, 0.09, 0.04),
+    { disableNormalization: false }
+  );
 
-  function playAudioData(key, decodedAudio, gain) {
-    console.debug('playAudioData: ', key, gain);
-    const audioSource = context.createBufferSource();
-    if (gainNodes[key]) {
-      diminishGain(gainNodes[key]);
-    }
-    audioSource.onended = () => {
-      state.keyActive[key] = false;
-      if (sourceNodes[key] === audioSource) {
-        delete sourceNodes[key];
-      }
-    };
-    const gainNode = context.createGain();
-    gainNode.gain.value = 0;
-    gainNode.gain.linearRampToValueAtTime(gain || 1.0, context.currentTime + NOTE_ATTACK_SECONDS);
-    gainNodes[key] = gainNode;
-    gainNode.connect(masterGain);
-    audioSource.buffer = decodedAudio;
-    sourceNodes[key] = audioSource;
-    audioSource.connect(gainNode);
-    audioSource.start(0);
-  }
+  // A couple of seconds of white noise, generated once and looped, for breath.
+  const NOISE_BUFFER = (function() {
+    const frames = Math.floor(context.sampleRate * 2);
+    const buffer = context.createBuffer(1, frames, context.sampleRate);
+    const data = buffer.getChannelData(0);
+    for (let i = 0; i < frames; i++) data[i] = Math.random() * 2 - 1;
+    return buffer;
+  }());
+
+  // One shared vibrato LFO fanned out to every voice's detune (in cents).
+  const vibrato = context.createOscillator();
+  const vibratoDepth = context.createGain();
+  vibrato.frequency.value = 5.2;
+  vibratoDepth.gain.value = 6;
+  vibrato.connect(vibratoDepth);
+  vibrato.start();
+
+  const NOTE_RELEASE_SECONDS = 0.22;
+
+  // key => the currently sounding voice for that note.
+  const voices = {};
 
   function playNote(key, velocity = 128) {
-    console.debug('playNote: %o', key, velocity);
     unlockAudio();
-    state.keyActive[key] = true;
-    return getAudioData(key).then(audioData => {
-      if (!state.keyActive[key]) return;
-      const gain = (0.66 * velocity / 128);
-      playAudioData(key, audioData, gain);
-    });
+    const freq = PianoNotes.keyFrequency(key, KEYS);
+    if (!freq) return;
+    if (voices[key]) releaseNote(key);
+    voices[key] = createVoice(freq, velocity);
   }
 
-  const gainNodes = {};
-  const sourceNodes = {};
   function releaseNote(key) {
-    if (gainNodes[key]) {
-      diminishGain(gainNodes[key]);
-    }
+    const voice = voices[key];
+    if (!voice) return;
+    delete voices[key];
+    stopVoice(voice);
   }
 
-  function diminishGain(gainNode, releaseTime = NOTE_RELEASE_SECONDS) {
-    gainNode.gain.setTargetAtTime(0, context.currentTime, releaseTime);
+  function createVoice(freq, velocity) {
+    const now = context.currentTime;
+    const level = 0.34 * clamp(velocity / 128, 0, 1);
+
+    const osc = context.createOscillator();
+    osc.setPeriodicWave(VOICE_WAVE);
+    osc.frequency.value = freq;
+    vibratoDepth.connect(osc.detune);
+
+    const amp = context.createGain();
+    amp.gain.setValueAtTime(0, now);
+    amp.gain.linearRampToValueAtTime(level, now + 0.03);          // soft reed attack
+    amp.gain.setTargetAtTime(level * 0.82, now + 0.03, 0.25);     // ease to sustain
+    osc.connect(amp);
+    amp.connect(masterGain);
+    osc.start(now);
+
+    // Breath: bandpassed noise, airy at onset then settling under the tone.
+    const breath = context.createBufferSource();
+    breath.buffer = NOISE_BUFFER;
+    breath.loop = true;
+    const breathFilter = context.createBiquadFilter();
+    breathFilter.type = 'bandpass';
+    breathFilter.frequency.value = freq * 2;
+    breathFilter.Q.value = 0.6;
+    const breathGain = context.createGain();
+    breathGain.gain.setValueAtTime(0.05 * level / 0.34, now);
+    breathGain.gain.setTargetAtTime(0.018 * level / 0.34, now + 0.04, 0.3);
+    breath.connect(breathFilter);
+    breathFilter.connect(breathGain);
+    breathGain.connect(masterGain);
+    breath.start(now);
+
+    return { osc, amp, breath, breathGain };
+  }
+
+  function stopVoice(voice) {
+    const now = context.currentTime;
+    const tail = NOTE_RELEASE_SECONDS;
+    voice.amp.gain.cancelScheduledValues(now);
+    voice.amp.gain.setTargetAtTime(0, now, tail / 3);
+    voice.breathGain.gain.setTargetAtTime(0, now, tail / 3);
+    voice.osc.stop(now + tail * 4);
+    voice.breath.stop(now + tail * 4);
+    try { vibratoDepth.disconnect(voice.osc.detune); } catch (e) { /* already gone */ }
   }
 
 
@@ -671,28 +674,6 @@
     });
   }
 
-  function preloadOctave(octave) {
-    // Returns a promise that settles once every note in the octave has loaded,
-    // swallowing per-note failures so one missing sample can't block the rest.
-    return Promise.all(KEYS.map(note => getAudioData(note + octave).catch(() => {})));
-  }
-
-  function initAudio() {
-    // Warm the default octave first so the very first taps sound instantly.
-    // Then, queued *behind* that load, warm the neighbouring octaves so the
-    // stepper is snappy too. Everything else loads lazily on first use
-    // (getAudioData is memoized).
-    //
-    // These are long (~35s) University of Iowa samples; eagerly decoding all
-    // ~80 at once saturates the audio decoder and balloons memory, which can
-    // leave early taps silent even though the AudioContext is already running
-    // (the tab's "playing" indicator only means the context resumed, not that
-    // a note actually sounded).
-    preloadOctave(baseOctave).then(() => {
-      [baseOctave - 1, baseOctave + 1].forEach(preloadOctave);
-    });
-  }
-
   function initMidi(container) {
     const midiStatus = document.createElement('div');
     const baseClassName = 'midi-status';
@@ -738,7 +719,6 @@
     ['pointerdown', 'touchstart', 'mousedown', 'keydown'].forEach(evt => {
       window.addEventListener(evt, unlockAudio, { passive: true });
     });
-    initAudio();
     buildHarp(container);
     initMidi(container);
     bindKeyboard();
