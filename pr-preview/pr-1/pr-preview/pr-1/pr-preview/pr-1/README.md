@@ -10,11 +10,14 @@ A harmonica-inspired, tap-first interface designed for touch. Instead of
 aiming at 88 tiny keys, you get:
 
 - **One octave of large "holes"** — big, thumb-sized chromatic tap targets.
-- **Bend by sliding the same finger** — the breath that sounds a hole on a
-  harmonica also bends it, so there's no separate control here. Tap and hold
-  a hole, then slide your finger **up to raise** or **down to lower** its
-  octave. The note's label updates (e.g. `C4` → `C5`) and a colored wash
-  shows the bend direction.
+- **Glide to play** — press and slide your finger sideways across the holes
+  and each one sounds as you reach it, no separate tap per note, the way you
+  slide across a harp. Multiple fingers play at once.
+- **Bend by sliding the same finger up/down** — horizontal position picks the
+  hole, vertical position bends it. Slide **up to raise** or **down to lower**
+  the current hole's octave; the label updates (e.g. `C4` → `C5`) and a
+  colored wash shows the bend direction. Splitting the axes means gliding
+  along the row stays in tune while deliberate up/down movement bends.
 - **Continuous, per-hole bending** — each held finger detunes its own note
   independently across up to a full octave, the digital cousin of a
   draw/overblow bend, gliding back to pitch as you slide home.

@@ -583,9 +583,15 @@
   }
 
   function initAudio() {
-    KEY_OCTAVES_STR.forEach(keyOctave => {
-      getAudioData(keyOctave);
-    });
+    // Warm only the default octave so the first taps sound instantly. Every
+    // other note loads lazily on first use (getAudioData is memoized).
+    //
+    // These are long (~35s) University of Iowa samples; eagerly decoding all
+    // ~80 of them at once saturates the audio decoder and balloons memory,
+    // which can leave early taps silent even though the AudioContext is
+    // already running (the tab's "playing" indicator only means the context
+    // resumed, not that a note actually sounded).
+    KEYS.forEach(note => getAudioData(note + baseOctave));
   }
 
   function initMidi(container) {

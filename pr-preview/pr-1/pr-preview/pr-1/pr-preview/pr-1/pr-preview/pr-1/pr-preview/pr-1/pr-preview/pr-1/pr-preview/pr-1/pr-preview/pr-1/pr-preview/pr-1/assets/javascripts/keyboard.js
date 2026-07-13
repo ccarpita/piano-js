@@ -1,56 +1,8 @@
 (function(global) {
 
-  // Pure note/pitch math, shared with the unit tests (see notes.js).
-  const PianoNotes = global.PianoNotes;
-  const clamp = PianoNotes.clamp;
-
   const context = new AudioContext();
   const compressor = context.createDynamicsCompressor();
   compressor.connect(context.destination);
-
-  // Single master bus every voice routes through, so one gain controls overall
-  // volume (and gives us a place to tap for metering/tests).
-  const masterGain = context.createGain();
-  masterGain.gain.value = 1.0;
-  masterGain.connect(context.destination);
-
-  /**
-   * Browsers create an AudioContext in the "suspended" state and will only
-   * begin producing sound after resume() is called from within a user
-   * gesture. Without this, every note is silent. Resume on the first pointer,
-   * touch, or key interaction (and defensively before each note).
-   */
-  function unlockAudio() {
-    if (context.state === 'suspended') {
-      return context.resume();
-    }
-    return Promise.resolve();
-  }
-
-  /**
-   * Play a short 440Hz sine through the master bus. It needs no samples or
-   * network, so it isolates the audio path: hear this but not the piano => a
-   * sample/loading issue; hear nothing => system output / volume / muted tab.
-   */
-  function playTestTone() {
-    unlockAudio();
-    const now = context.currentTime;
-    const osc = context.createOscillator();
-    const env = context.createGain();
-    osc.type = 'sine';
-    osc.frequency.value = 440;
-    env.gain.setValueAtTime(0, now);
-    env.gain.linearRampToValueAtTime(0.3, now + 0.02);
-    env.gain.setTargetAtTime(0, now + 0.4, 0.08);
-    osc.connect(env);
-    env.connect(masterGain);
-    osc.start(now);
-    osc.stop(now + 0.8);
-  }
-
-  function setMasterVolume(fraction) {
-    masterGain.gain.setTargetAtTime(fraction, context.currentTime, 0.01);
-  }
 
   /**
    * Number of seconds of release for the closing envelope of the sample.
@@ -223,7 +175,7 @@
     gainNode.gain.value = 0;
     gainNode.gain.linearRampToValueAtTime(gain || 1.0, context.currentTime + NOTE_ATTACK_SECONDS);
     gainNodes[key] = gainNode;
-    gainNode.connect(masterGain);
+    gainNode.connect(context.destination);
     audioSource.buffer = decodedAudio;
     if (detuneCents) {
       audioSource.detune.value = detuneCents;
@@ -235,7 +187,6 @@
 
   function playNote(key, velocity = 128, detuneCents = 0) {
     console.debug('playNote: %o', key, velocity);
-    unlockAudio();
     state.keyActive[key] = true;
     return getAudioData(key).then(audioData => {
       if (!state.keyActive[key]) return;
@@ -291,9 +242,13 @@
   }
 
   function parseMidiNote(value) {
-    // 24 => "C1", 36 => "C2"
+    // 24 => "C1"
+    // 36 => "C2"
     // todo(carpita): support initial 3 keys to left of C1 (code 21-23)
-    return PianoNotes.midiNoteName(value, KEYS);
+    if (value < 21) return;
+    const octave = Math.floor(value / 12) - 1;
+    const step = value % 12;
+    return KEYS[step] + String(octave);
   }
 
   function parseMidiMessage(message) {
@@ -396,10 +351,6 @@
       return listener;
     }
 
-    if (!navigator.requestMIDIAccess) {
-      updateState({hasMidiSupport: false});
-      return Promise.reject(new Error('Web MIDI API not available'));
-    }
     return navigator.requestMIDIAccess()
       .then(generateListener)
       .catch(e => {
@@ -447,6 +398,10 @@
   // note-name (e.g. "C") => active-hole state for currently held holes.
   const activeHoles = {};
 
+  function clamp(value, min, max) {
+    return Math.min(max, Math.max(min, value));
+  }
+
   function holeDown(note, el, clientY) {
     if (activeHoles[note]) return;
     const key = note + baseOctave;
@@ -459,7 +414,9 @@
   function holeBend(note, clientY) {
     const hole = activeHoles[note];
     if (!hole) return;
-    hole.bend = PianoNotes.bendOffset(hole.startY, clientY, PIXELS_PER_OCTAVE, MAX_BEND_OCTAVES);
+    // Up is positive bend (higher), down is negative (lower).
+    const offset = (hole.startY - clientY) / PIXELS_PER_OCTAVE;
+    hole.bend = clamp(offset, -MAX_BEND_OCTAVES, MAX_BEND_OCTAVES);
     const source = sourceNodes[hole.key];
     if (source) {
       source.detune.setTargetAtTime(hole.bend * CENTS_PER_OCTAVE, context.currentTime, 0.01);
@@ -483,7 +440,7 @@
     hole.el.style.setProperty('--bend', hole.bend.toFixed(3));
     const label = hole.el.querySelector('.hole-label');
     if (!label) return;
-    const sounding = PianoNotes.soundingOctave(hole.base, hole.bend);
+    const sounding = clamp(Math.round(hole.base + hole.bend), 1, 7);
     label.textContent = hole.note + sounding;
   }
 
@@ -530,35 +487,6 @@
     head.appendChild(hint);
     head.appendChild(stepper);
     harp.appendChild(head);
-
-    // --- audio controls: master volume + a sample-free test tone ---
-    const audio = createElement('div');
-    audio.className = 'harp-audio';
-
-    const testBtn = createElement('button');
-    testBtn.className = 'test-tone';
-    testBtn.textContent = 'Test tone';
-    testBtn.addEventListener('click', playTestTone);
-
-    const volWrap = createElement('label');
-    volWrap.className = 'vol-wrap';
-    const volIcon = createElement('span');
-    volIcon.className = 'vol-icon';
-    volIcon.textContent = '🔊';
-    const vol = createElement('input');
-    vol.type = 'range';
-    vol.className = 'vol';
-    vol.min = '0';
-    vol.max = '150';
-    vol.value = '100';
-    vol.setAttribute('aria-label', 'Master volume');
-    vol.addEventListener('input', () => setMasterVolume(Number(vol.value) / 100));
-    volWrap.appendChild(volIcon);
-    volWrap.appendChild(vol);
-
-    audio.appendChild(testBtn);
-    audio.appendChild(volWrap);
-    harp.appendChild(audio);
 
     // --- holes: one octave of large, chromatic tap targets ---
     const holes = createElement('div');
@@ -642,26 +570,9 @@
     });
   }
 
-  function preloadOctave(octave) {
-    // Returns a promise that settles once every note in the octave has loaded,
-    // swallowing per-note failures so one missing sample can't block the rest.
-    return Promise.all(KEYS.map(note => getAudioData(note + octave).catch(() => {})));
-  }
-
   function initAudio() {
-    // Warm the default octave first so the very first taps sound instantly.
-    // Then, queued *behind* that load, warm the +/-1 bend octaves so sliding
-    // to bend is seamless too. Everything else loads lazily on first use
-    // (getAudioData is memoized).
-    //
-    // These are long (~35s) University of Iowa samples; eagerly decoding all
-    // ~80 at once saturates the audio decoder and balloons memory, which can
-    // leave early taps silent even though the AudioContext is already running
-    // (the tab's "playing" indicator only means the context resumed, not that
-    // a note actually sounded).
-    preloadOctave(baseOctave).then(() => {
-      [baseOctave - MAX_BEND_OCTAVES, baseOctave + MAX_BEND_OCTAVES]
-        .forEach(preloadOctave);
+    KEY_OCTAVES_STR.forEach(keyOctave => {
+      getAudioData(keyOctave);
     });
   }
 
@@ -699,17 +610,11 @@
         }
       });
     }).catch(e => {
-      // MIDI being unavailable (no support, no device, permission denied) is
-      // expected and not an app error — keep it out of the error channel.
-      console.warn('MIDI unavailable:', e && e.message ? e.message : e);
+      console.error(e);
     });
   }
 
   function init(container) {
-    // Resume the AudioContext on the first user gesture (autoplay policy).
-    ['pointerdown', 'touchstart', 'mousedown', 'keydown'].forEach(evt => {
-      window.addEventListener(evt, unlockAudio, { passive: true });
-    });
     initAudio();
     buildHarp(container);
     buildPiano(container);

@@ -47,6 +47,16 @@
   }
 
   /**
+   * Fundamental frequency (Hz) of a key name like "C4" or "Db5". Returns null
+   * if the key can't be parsed.
+   */
+  function keyFrequency(key, keys) {
+    const match = /^([A-G]b?)(-?\d+)$/.exec(key);
+    if (!match) return null;
+    return noteFrequency(match[1], Number(match[2]), keys);
+  }
+
+  /**
    * Split a tilt value (-1..1) into gains for the added 3rd and 5th harmonic
    * partials: tilting up (positive) raises the 3rd, down (negative) the 5th.
    */
@@ -57,5 +67,5 @@
     };
   }
 
-  return { clamp, midiNoteName, dragAmount, noteFrequency, harmonicGains };
+  return { clamp, midiNoteName, dragAmount, noteFrequency, keyFrequency, harmonicGains };
 }));

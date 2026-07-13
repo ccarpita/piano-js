@@ -582,16 +582,27 @@
     });
   }
 
+  function preloadOctave(octave) {
+    // Returns a promise that settles once every note in the octave has loaded,
+    // swallowing per-note failures so one missing sample can't block the rest.
+    return Promise.all(KEYS.map(note => getAudioData(note + octave).catch(() => {})));
+  }
+
   function initAudio() {
-    // Warm only the default octave so the first taps sound instantly. Every
-    // other note loads lazily on first use (getAudioData is memoized).
+    // Warm the default octave first so the very first taps sound instantly.
+    // Then, queued *behind* that load, warm the +/-1 bend octaves so sliding
+    // to bend is seamless too. Everything else loads lazily on first use
+    // (getAudioData is memoized).
     //
     // These are long (~35s) University of Iowa samples; eagerly decoding all
-    // ~80 of them at once saturates the audio decoder and balloons memory,
-    // which can leave early taps silent even though the AudioContext is
-    // already running (the tab's "playing" indicator only means the context
-    // resumed, not that a note actually sounded).
-    KEYS.forEach(note => getAudioData(note + baseOctave));
+    // ~80 at once saturates the audio decoder and balloons memory, which can
+    // leave early taps silent even though the AudioContext is already running
+    // (the tab's "playing" indicator only means the context resumed, not that
+    // a note actually sounded).
+    preloadOctave(baseOctave).then(() => {
+      [baseOctave - MAX_BEND_OCTAVES, baseOctave + MAX_BEND_OCTAVES]
+        .forEach(preloadOctave);
+    });
   }
 
   function initMidi(container) {

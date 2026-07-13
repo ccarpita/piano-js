@@ -1,6 +1,8 @@
 # Piano.JS
 
-A basic piano synth, using University of Iowa public domain samples, implemented in CSS/JS.
+A tap-first, harmonica-inspired synth implemented in plain CSS/JS. Notes are
+generated on the fly with the Web Audio API — no samples, no downloads — so
+it's light enough for a mobile site.
 
 See: https://ccarpita.github.io/piano-js/
 
@@ -16,23 +18,29 @@ aiming at 88 tiny keys, you get:
 - **Shape the tone by sliding up/down** — horizontal position picks the hole,
   vertical position colors it. Sliding **up** fades in the **3rd harmonic**
   (a bright, reedy color) and **down** fades in the **5th**, layered as sine
-  partials over the sampled note. A green (up) / amber (down) wash shows the
-  emphasis. Splitting the axes means gliding along the row keeps a neutral
-  tone while deliberate up/down movement colors it.
+  partials over the note. A green (up) / amber (down) wash shows the emphasis.
+  Splitting the axes means gliding along the row keeps a neutral tone while
+  deliberate up/down movement colors it.
 - **Register stepper** — the `−` / `+` control shifts the base octave (2–6)
   so you can roam the whole range.
 - **Volume + test tone** — a master volume slider, and a **Test tone** button
-  that plays a sample-free 440Hz tone. If you can hear the tone but not the
-  piano it's a sample/loading issue; if you hear neither it's system output
-  (muted tab, output device, or OS volume).
+  that plays a 440Hz tone straight through the master bus. If you can hear the
+  tone but not the notes it's a synth bug; if you hear neither it's system
+  output (muted tab, output device, or OS volume).
 
 MIDI and computer-keyboard input work too.
 
-Works in Chrome, Firefox, Edge, and Safari (desktop and iOS). Samples are
-served as Ogg Vorbis where supported and fall back to MP3 on Safari, which
-can't decode Ogg. Audio is unlocked on the first tap (iOS autoplay policy);
-note that iOS routes Web Audio through the ringer channel, so the hardware
-mute switch will silence it.
+## The sound
+
+Each note is synthesized as a **harmonica crossed with a flute**: a
+flute-dominant fundamental (a nearly pure tone) with harmonica reediness added
+through odd harmonics via a Web Audio `PeriodicWave`, plus a breath of
+bandpassed noise and a gentle shared vibrato. There are no audio files to
+download, so notes are instant and the whole site is tiny.
+
+Works in Chrome, Firefox, Edge, and Safari (desktop and iOS). Audio is
+unlocked on the first tap (iOS autoplay policy); note that iOS routes Web
+Audio through the ringer channel, so the hardware mute switch will silence it.
 
 ## Development
 

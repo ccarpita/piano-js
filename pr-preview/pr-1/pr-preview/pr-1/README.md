@@ -13,24 +13,20 @@ aiming at 88 tiny keys, you get:
 - **Glide to play** — press and slide your finger sideways across the holes
   and each one sounds as you reach it, no separate tap per note, the way you
   slide across a harp. Multiple fingers play at once.
-- **Bend by sliding the same finger up/down** — horizontal position picks the
-  hole, vertical position bends it. Slide **up to raise** or **down to lower**
-  the current hole's octave; the label updates (e.g. `C4` → `C5`) and a
-  colored wash shows the bend direction. Splitting the axes means gliding
-  along the row stays in tune while deliberate up/down movement bends.
-- **Continuous, per-hole bending** — each held finger detunes its own note
-  independently across up to a full octave, the digital cousin of a
-  draw/overblow bend, gliding back to pitch as you slide home.
+- **Shape the tone by sliding up/down** — horizontal position picks the hole,
+  vertical position colors it. Sliding **up** fades in the **3rd harmonic**
+  (a bright, reedy color) and **down** fades in the **5th**, layered as sine
+  partials over the sampled note. A green (up) / amber (down) wash shows the
+  emphasis. Splitting the axes means gliding along the row keeps a neutral
+  tone while deliberate up/down movement colors it.
 - **Register stepper** — the `−` / `+` control shifts the base octave (2–6)
-  for new taps, so you can roam the whole keyboard, not just the three
-  octaves the bend can reach on its own.
+  so you can roam the whole range.
 - **Volume + test tone** — a master volume slider, and a **Test tone** button
   that plays a sample-free 440Hz tone. If you can hear the tone but not the
   piano it's a sample/loading issue; if you hear neither it's system output
   (muted tab, output device, or OS volume).
 
-The full multi-octave keyboard, MIDI, and computer-keyboard input all still
-work below.
+MIDI and computer-keyboard input work too.
 
 Works in Chrome, Firefox, Edge, and Safari (desktop and iOS). Samples are
 served as Ogg Vorbis where supported and fall back to MP3 on Safari, which

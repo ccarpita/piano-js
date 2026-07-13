@@ -2,13 +2,14 @@
 const { test, expect } = require('@playwright/test');
 
 /**
- * Injected before any app code: records console errors, uncaught page errors,
- * whether the AudioContext resumes, and whether a buffer source ever starts
- * (i.e. a note actually plays). This is what catches the "no audio" class of
- * regression — a suspended context, or a note that never reaches playback.
+ * Injected before any app code: records console/page errors, exposes the
+ * AudioContext, taps an analyser on the output to measure real signal, and
+ * logs the frequency of every oscillator started (voices + partials). This is
+ * what catches the "no audio" class of regression — a suspended context, or a
+ * note that never reaches the output.
  */
 function installAudioSpy() {
-  window.__spy = { starts: 0, oscFreqs: [] };
+  window.__spy = { oscFreqs: [] };
   const OrigContext = window.AudioContext;
   window.AudioContext = class extends OrigContext {
     constructor(...args) {
@@ -17,17 +18,6 @@ function installAudioSpy() {
       // Analyser tap so tests can read the real signal reaching the output.
       window.__analyser = this.createAnalyser();
       window.__analyser.fftSize = 2048;
-    }
-    createBufferSource() {
-      const src = super.createBufferSource();
-      const origStart = src.start.bind(src);
-      src.start = (...a) => {
-        // Ignore the 1-sample silent buffer used to unlock iOS audio; only
-        // real (long) sample buffers count as a note reaching playback.
-        if (src.buffer && src.buffer.length > 1) window.__spy.starts++;
-        return origStart(...a);
-      };
-      return src;
     }
     createOscillator() {
       const osc = super.createOscillator();
@@ -102,7 +92,13 @@ test.describe('Piano.js Harp Mode', () => {
     return { x: box.x + box.width / 2, y: box.y + box.height / 2, box };
   }
 
-  test('pressing a hole resumes audio and plays a note', async ({ page }) => {
+  /** Count of oscillators started at note-fundamental pitches (above the
+   * ~5Hz vibrato LFO, below the 3rd/5th harmonic partials). */
+  async function fundamentalCount(page) {
+    return page.evaluate(() => window.__spy.oscFreqs.filter((f) => f > 20 && f < 700).length);
+  }
+
+  test('pressing a hole resumes audio and produces sound', async ({ page }) => {
     const c = await holeCenter(page, 'C');
     // Context starts suspended under the browser autoplay policy...
     expect(await page.evaluate(() => window.__audioCtx.state)).toBe('suspended');
@@ -114,10 +110,12 @@ test.describe('Piano.js Harp Mode', () => {
     await expect
       .poll(() => page.evaluate(() => window.__audioCtx.state))
       .toBe('running');
-    // A buffer source actually starts once the sample decodes (the sound).
+    // The synth voice is instant (no samples) — real signal hits the output.
     await expect
-      .poll(() => page.evaluate(() => window.__spy.starts), { timeout: 15000 })
-      .toBeGreaterThan(0);
+      .poll(async () => {
+        return page.evaluate(() => window.__outputPeak());
+      }, { timeout: 5000 })
+      .toBeGreaterThan(0.02);
     await page.mouse.up();
 
     expect(errors, 'no errors while playing').toEqual([]);
@@ -137,10 +135,9 @@ test.describe('Piano.js Harp Mode', () => {
     }
     await page.mouse.up();
 
-    // C, Db, D, Eb, E => several distinct notes triggered from one gesture.
-    await expect
-      .poll(() => page.evaluate(() => window.__spy.starts), { timeout: 15000 })
-      .toBeGreaterThanOrEqual(3);
+    // C, Db, D, Eb, E => several distinct note voices from one gesture (each
+    // voice starts one oscillator at the note's fundamental).
+    await expect.poll(() => fundamentalCount(page)).toBeGreaterThanOrEqual(3);
     expect(errors).toEqual([]);
   });
 
@@ -176,40 +173,17 @@ test.describe('Piano.js Harp Mode', () => {
     expect(errors).toEqual([]);
   });
 
-  test('falls back to mp3 when Ogg is unsupported (Safari)', async ({ browser, baseURL }) => {
-    // Use a dedicated page so no Ogg load from the shared page's navigation can
-    // contaminate the request log.
-    const page = await browser.newPage();
-    try {
-      await page.addInitScript(installAudioSpy);
-      // Simulate a browser (Safari) that cannot decode Ogg Vorbis.
-      await page.addInitScript(() => {
-        const proto = window.HTMLMediaElement.prototype;
-        const orig = proto.canPlayType;
-        proto.canPlayType = function (type) {
-          return /ogg/i.test(type) ? '' : orig.call(this, type);
-        };
-      });
-      const sampleExts = [];
-      page.on('request', (req) => {
-        const m = req.url().match(/Piano\.ff\.[^/]+\.(ogg|mp3)$/);
-        if (m) sampleExts.push(m[1]);
-      });
-
-      await page.goto(baseURL + '/index.html', { waitUntil: 'domcontentloaded' });
-      const box = await page.locator('.hole-C').boundingBox();
-      await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
-      await page.mouse.down();
-
-      await expect.poll(() => sampleExts.includes('mp3')).toBe(true);
-      expect(sampleExts, 'must not request Ogg on a non-Ogg browser').not.toContain('ogg');
-      // And a note still reaches playback via the mp3 sample.
-      await expect
-        .poll(() => page.evaluate(() => window.__spy.starts), { timeout: 15000 })
-        .toBeGreaterThan(0);
-    } finally {
-      await page.close();
-    }
+  test('loads no audio sample files (fully synthesized)', async ({ page }) => {
+    const audioRequests = [];
+    page.on('request', (req) => {
+      if (/assets\/audio/.test(req.url())) audioRequests.push(req.url());
+    });
+    const c = await holeCenter(page, 'C');
+    await page.mouse.move(c.x, c.y);
+    await page.mouse.down();
+    await page.waitForTimeout(300);
+    await page.mouse.up();
+    expect(audioRequests, 'no sample downloads — the voice is synthesized').toEqual([]);
   });
 
   test('vertical drag mixes in the 3rd and 5th harmonics', async ({ page }) => {

@@ -212,12 +212,6 @@
     return global.document.createElement(tag);
   }
 
-  function createAudioTag(key) {
-    const audio = createElement('audio');
-    audio.src = audioPath(key);
-    return audio;
-  }
-
   function audioPath(key) {
     return 'assets/audio/Piano.ff.' + key + '.' + AUDIO_EXT;
   }
@@ -242,7 +236,7 @@
     });
   });
 
-  function playAudioData(key, decodedAudio, gain, detuneCents) {
+  function playAudioData(key, decodedAudio, gain) {
     console.debug('playAudioData: ', key, gain);
     const audioSource = context.createBufferSource();
     if (gainNodes[key]) {
@@ -260,26 +254,19 @@
     gainNodes[key] = gainNode;
     gainNode.connect(masterGain);
     audioSource.buffer = decodedAudio;
-    if (detuneCents) {
-      // Bend via playbackRate (resampling) rather than detune: for buffer
-      // sources they're equivalent, but detune on AudioBufferSourceNode is
-      // missing on older Safari, whereas playbackRate is universal.
-      audioSource.playbackRate.value = Math.pow(2, detuneCents / CENTS_PER_OCTAVE);
-    }
     sourceNodes[key] = audioSource;
     audioSource.connect(gainNode);
     audioSource.start(0);
   }
 
-  function playNote(key, velocity = 128, detuneCents = 0) {
+  function playNote(key, velocity = 128) {
     console.debug('playNote: %o', key, velocity);
     unlockAudio();
     state.keyActive[key] = true;
     return getAudioData(key).then(audioData => {
       if (!state.keyActive[key]) return;
-      renderKeyActive(key);
       const gain = (0.66 * velocity / 128);
-      playAudioData(key, audioData, gain, detuneCents);
+      playAudioData(key, audioData, gain);
     });
   }
 
@@ -289,44 +276,12 @@
     if (gainNodes[key]) {
       diminishGain(gainNodes[key]);
     }
-    renderKeyInactive(key);
   }
 
   function diminishGain(gainNode, releaseTime = NOTE_RELEASE_SECONDS) {
     gainNode.gain.setTargetAtTime(0, context.currentTime, releaseTime);
   }
 
-  function makeKey(container, key, oct) {
-    const el = createElement('div');
-    const cont = createElement('div');
-    cont.className = 'key-container';
-    el.className = 'key key-' + key;
-    el.setAttribute('data-key', key + oct);
-    el.id = 'key-' + key + oct;
-    container.appendChild(cont);
-    cont.appendChild(el);
-  }
-
-  function getKeyElement(key) {
-    return document.getElementById('key-' + key);
-  }
-
-
-  function renderKeyActive(key) {
-    const el = getKeyElement(key);
-    if (!el) return;
-    el.classList.add('active');
-  }
-
-  function renderKeyInactive(key) {
-    const el = getKeyElement(key);
-    if (!el) return;
-    el.classList.remove('active');
-  }
-
-  function keyFromEvent(e) {
-    return e.target.getAttribute('data-key')
-  }
 
   function parseMidiNote(value) {
     // 24 => "C1", 36 => "C2"
@@ -446,12 +401,6 @@
       });
   });
 
-  function buildPiano(container) {
-    KEY_OCTAVES.forEach(ko => {
-      makeKey(container, ko[0], ko[1]);
-    });
-  }
-
   /**
    * Harp Mode — a harmonica-inspired, tap-first interface.
    *
@@ -461,25 +410,23 @@
    *   2. Glide to play. Press and slide your finger sideways across the holes
    *      and each one sounds as you reach it — no separate tap per note, the
    *      way you slide your mouth across a harp.
-   *   3. A second axis in the same gesture. Horizontal position picks the
-   *      hole; vertical position bends it. Slide up/down while on a hole to
-   *      bend its octave up to a full step — the digital cousin of a
-   *      draw/overblow bend. Because the two axes are split, gliding along the
-   *      row stays in tune while deliberate up/down movement bends.
+   *   3. Timbre lives in the same gesture. Horizontal position picks the hole;
+   *      vertical position shapes its tone. Sliding up mixes in the 3rd
+   *      harmonic (a bright, reedy fifth-above color), sliding down mixes in
+   *      the 5th — the way a harp player brightens or hollows a note by
+   *      changing their mouth. Splitting the axes means gliding along the row
+   *      keeps a neutral tone while deliberate up/down movement colors it.
    */
 
-  const CENTS_PER_OCTAVE = 1200;
-
-  // Notes play at this octave; vertical drag bends up to +/- one octave. The
-  // stepper shifts baseOctave; the +/-1 bend headroom is why it's clamped to
-  // 2..6, keeping every sounding octave inside the 1..7 sample range.
+  // Notes play at this octave; the stepper shifts it within the sample range.
   let baseOctave = 4;
   const BASE_MIN_OCTAVE = 2;
   const BASE_MAX_OCTAVE = 6;
-  const MAX_BEND_OCTAVES = 1;
 
-  // How far (px) you drag vertically to reach a full octave of bend.
-  const PIXELS_PER_OCTAVE = 140;
+  // How far (px) you drag vertically to reach full harmonic emphasis, and the
+  // peak gain of an added partial relative to the ~0.66 sampled note.
+  const PIXELS_PER_HARMONIC = 120;
+  const HARMONIC_MAX_GAIN = 0.18;
 
   // The holes container, set in buildHarp; used to hit-test holes by column.
   let holesEl = null;
@@ -490,7 +437,7 @@
   /**
    * The hole under a given horizontal position, chosen by column only: we
    * sample at the holes' vertical midline so the current hole doesn't change
-   * when the finger moves up or down to bend (or past the row's edges).
+   * when the finger moves up or down to color the tone (or past the edges).
    */
   function holeAtX(clientX) {
     if (!holesEl) return null;
@@ -500,22 +447,65 @@
     return el && el.closest ? el.closest('.hole') : null;
   }
 
+  /**
+   * Layer two sine partials — the 3rd and 5th harmonics — over a note, each
+   * behind its own gain (starting silent) so the vertical drag can fade them
+   * in. Returns the partials so they can be updated and stopped later.
+   */
+  function createHarmonics(freq) {
+    function partial(multiple) {
+      const osc = context.createOscillator();
+      osc.type = 'sine';
+      osc.frequency.value = freq * multiple;
+      const gain = context.createGain();
+      gain.gain.value = 0;
+      osc.connect(gain);
+      gain.connect(masterGain);
+      osc.start();
+      return { osc, gain };
+    }
+    return { h3: partial(3), h5: partial(5) };
+  }
+
+  function applyHarmonics(state) {
+    const gains = PianoNotes.harmonicGains(state.tilt, HARMONIC_MAX_GAIN);
+    const t = context.currentTime;
+    state.harmonics.h3.gain.gain.setTargetAtTime(gains.h3, t, 0.02);
+    state.harmonics.h5.gain.gain.setTargetAtTime(gains.h5, t, 0.02);
+  }
+
+  function stopHarmonics(harmonics) {
+    const t = context.currentTime;
+    [harmonics.h3, harmonics.h5].forEach(partial => {
+      try {
+        partial.gain.gain.setTargetAtTime(0, t, NOTE_RELEASE_SECONDS / 3);
+        partial.osc.stop(t + NOTE_RELEASE_SECONDS);
+      } catch (e) { /* already stopped */ }
+    });
+  }
+
   function startHole(pointerId, holeEl, clientY) {
     const note = holeEl.getAttribute('data-note');
-    const key = note + baseOctave;
-    const state = { note, key, el: holeEl, startY: clientY, base: baseOctave, bend: 0 };
+    const octave = baseOctave;
+    const key = note + octave;
+    const freq = PianoNotes.noteFrequency(note, octave, KEYS);
+    const state = {
+      note, key, el: holeEl, startY: clientY, base: octave, tilt: 0,
+      harmonics: createHarmonics(freq),
+    };
     pointerHoles[pointerId] = state;
     holeEl.classList.add('active');
-    renderHoleBend(state);
-    playNote(key, 128, 0);
+    renderHoleTilt(state);
+    playNote(key, 128);
   }
 
   function releaseHoleState(state) {
     state.el.classList.remove('active');
-    state.el.style.removeProperty('--bend');
+    state.el.style.removeProperty('--tilt');
     const label = state.el.querySelector('.hole-label');
     if (label) label.textContent = state.note;
     releaseNote(state.key);
+    stopHarmonics(state.harmonics);
   }
 
   function movePointer(pointerId, clientX, clientY) {
@@ -528,14 +518,10 @@
       startHole(pointerId, holeEl, clientY);
       return;
     }
-    // Same hole (or in a gap): vertical movement bends it.
-    state.bend = PianoNotes.bendOffset(state.startY, clientY, PIXELS_PER_OCTAVE, MAX_BEND_OCTAVES);
-    const source = sourceNodes[state.key];
-    if (source) {
-      // 2^octaves resampling — see playAudioData for why not detune.
-      source.playbackRate.setTargetAtTime(Math.pow(2, state.bend), context.currentTime, 0.01);
-    }
-    renderHoleBend(state);
+    // Same hole (or in a gap): vertical movement colors the tone.
+    state.tilt = PianoNotes.dragAmount(state.startY, clientY, PIXELS_PER_HARMONIC, 1);
+    applyHarmonics(state);
+    renderHoleTilt(state);
   }
 
   function endPointer(pointerId) {
@@ -545,13 +531,11 @@
     releaseHoleState(state);
   }
 
-  function renderHoleBend(hole) {
-    // Drive the fill direction/intensity via a CSS custom property (-1..1).
-    hole.el.style.setProperty('--bend', hole.bend.toFixed(3));
+  function renderHoleTilt(hole) {
+    // Drive the fill (up = 3rd harmonic, down = 5th) via a CSS property (-1..1).
+    hole.el.style.setProperty('--tilt', hole.tilt.toFixed(3));
     const label = hole.el.querySelector('.hole-label');
-    if (!label) return;
-    const sounding = PianoNotes.soundingOctave(hole.base, hole.bend);
-    label.textContent = hole.note + sounding;
+    if (label) label.textContent = hole.note + hole.base;
   }
 
   function buildHarp(container) {
@@ -590,7 +574,7 @@
 
     const hint = createElement('div');
     hint.className = 'harp-hint';
-    hint.textContent = 'Slide across the holes to play; slide up or down to bend';
+    hint.textContent = 'Slide across holes to play; up = 3rd harmonic, down = 5th';
 
     const head = createElement('div');
     head.className = 'harp-head';
@@ -645,8 +629,8 @@
 
     // Pointer handling lives on the container, not per hole: we capture the
     // pointer here so a finger can glide across columns (and beyond the row's
-    // vertical bounds while bending) and keep sending moves. Each pointerId is
-    // tracked independently, so multiple fingers can play at once.
+    // vertical bounds while coloring the tone) and keep sending moves. Each
+    // pointerId is tracked independently, so multiple fingers can play at once.
     holes.addEventListener('pointerdown', e => {
       const holeEl = holeAtX(e.clientX);
       if (!holeEl) return;
@@ -665,36 +649,6 @@
 
     harp.appendChild(holes);
     container.appendChild(harp);
-  }
-
-  function bindMouse(container) {
-
-    function require(mesg) {
-      return arg => {
-        if (!arg) throw new Error(mesg || 'missing argument');
-        return arg;
-      };
-    };
-
-    container.addEventListener('mousedown', e => Promise.resolve(e)
-      .then(keyFromEvent)
-      .then(require('event key'))
-      .then(playNote)
-      .catch(e => {}));
-
-    container.addEventListener('mouseout', e => Promise.resolve(e)
-      .then(keyFromEvent)
-      .then(require('event key'))
-      .then(releaseNote)
-      .catch(e => {}));
-
-    container.addEventListener('mouseup', e => Promise.resolve(e)
-      .then(() => {
-        Object.keys(state.keyActive)
-          .filter(key => state.keyActive[key])
-          .forEach(releaseNote);
-      }));
-
   }
 
   function bindKeyboard() {
@@ -725,8 +679,8 @@
 
   function initAudio() {
     // Warm the default octave first so the very first taps sound instantly.
-    // Then, queued *behind* that load, warm the +/-1 bend octaves so sliding
-    // to bend is seamless too. Everything else loads lazily on first use
+    // Then, queued *behind* that load, warm the neighbouring octaves so the
+    // stepper is snappy too. Everything else loads lazily on first use
     // (getAudioData is memoized).
     //
     // These are long (~35s) University of Iowa samples; eagerly decoding all
@@ -735,8 +689,7 @@
     // (the tab's "playing" indicator only means the context resumed, not that
     // a note actually sounded).
     preloadOctave(baseOctave).then(() => {
-      [baseOctave - MAX_BEND_OCTAVES, baseOctave + MAX_BEND_OCTAVES]
-        .forEach(preloadOctave);
+      [baseOctave - 1, baseOctave + 1].forEach(preloadOctave);
     });
   }
 
@@ -787,9 +740,7 @@
     });
     initAudio();
     buildHarp(container);
-    buildPiano(container);
     initMidi(container);
-    bindMouse(container);
     bindKeyboard();
   }
 

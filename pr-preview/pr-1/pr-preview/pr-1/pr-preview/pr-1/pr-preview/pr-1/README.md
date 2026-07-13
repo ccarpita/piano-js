@@ -29,7 +29,11 @@ aiming at 88 tiny keys, you get:
 The full multi-octave keyboard, MIDI, and computer-keyboard input all still
 work below.
 
-Only Chrome/Firefox/Edge is supported, Safari 10+ should work once 2016 MacOS is out of beta.
+Works in Chrome, Firefox, Edge, and Safari (desktop and iOS). Samples are
+served as Ogg Vorbis where supported and fall back to MP3 on Safari, which
+can't decode Ogg. Audio is unlocked on the first tap (iOS autoplay policy);
+note that iOS routes Web Audio through the ringer channel, so the hardware
+mute switch will silence it.
 
 ## Development
 

@@ -29,33 +29,21 @@
   }
 
   /**
-   * Normalize a vertical drag (in px) to a signed amount. Up is positive,
-   * down is negative, clamped to +/- max. Used to drive the harmonic tilt.
+   * Convert a vertical drag (in px) into an octave bend. Up is positive
+   * (higher), down is negative (lower), clamped to +/- maxOctaves.
    */
-  function dragAmount(startY, clientY, pixelsPerUnit, max) {
-    const offset = (startY - clientY) / pixelsPerUnit;
-    return clamp(offset, -max, max);
+  function bendOffset(startY, clientY, pixelsPerOctave, maxOctaves) {
+    const offset = (startY - clientY) / pixelsPerOctave;
+    return clamp(offset, -maxOctaves, maxOctaves);
   }
 
   /**
-   * Fundamental frequency (Hz) of a note, from equal temperament with A4=440.
-   * `keys` is the 12-entry chromatic table; MIDI middle C (C4) = 60.
+   * The whole octave a hole sounds at, given its base octave and current
+   * fractional bend, clamped to the range covered by the samples (1..7).
    */
-  function noteFrequency(note, octave, keys) {
-    const midi = (octave + 1) * 12 + keys.indexOf(note);
-    return 440 * Math.pow(2, (midi - 69) / 12);
+  function soundingOctave(base, bend) {
+    return clamp(Math.round(base + bend), 1, 7);
   }
 
-  /**
-   * Split a tilt value (-1..1) into gains for the added 3rd and 5th harmonic
-   * partials: tilting up (positive) raises the 3rd, down (negative) the 5th.
-   */
-  function harmonicGains(tilt, maxGain) {
-    return {
-      h3: Math.max(0, tilt) * maxGain,
-      h5: Math.max(0, -tilt) * maxGain,
-    };
-  }
-
-  return { clamp, midiNoteName, dragAmount, noteFrequency, harmonicGains };
+  return { clamp, midiNoteName, bendOffset, soundingOctave };
 }));

@@ -2,7 +2,7 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { clamp, midiNoteName, dragAmount, noteFrequency, harmonicGains } =
+const { clamp, midiNoteName, dragAmount, noteFrequency, keyFrequency, harmonicGains } =
   require('../../assets/javascripts/notes.js');
 
 const KEYS = ['C', 'Db', 'D', 'Eb', 'E', 'F', 'Gb', 'G', 'Ab', 'A', 'Bb', 'B'];
@@ -40,6 +40,13 @@ test('noteFrequency uses equal temperament with A4=440', () => {
   assert.ok(Math.abs(noteFrequency('C', 4, KEYS) - 261.6256) < 1e-3); // middle C
   assert.ok(Math.abs(noteFrequency('A', 5, KEYS) - 880) < 1e-9);      // octave up
   assert.ok(Math.abs(noteFrequency('A', 3, KEYS) - 220) < 1e-9);      // octave down
+});
+
+test('keyFrequency parses a key name and returns its pitch', () => {
+  assert.ok(Math.abs(keyFrequency('A4', KEYS) - 440) < 1e-9);
+  assert.ok(Math.abs(keyFrequency('C4', KEYS) - 261.6256) < 1e-3);
+  assert.ok(Math.abs(keyFrequency('Db5', KEYS) - noteFrequency('Db', 5, KEYS)) < 1e-9);
+  assert.equal(keyFrequency('H9', KEYS), null); // unparseable
 });
 
 test('harmonicGains: up feeds the 3rd, down feeds the 5th', () => {
